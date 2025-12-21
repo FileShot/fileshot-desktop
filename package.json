@@ -1,0 +1,131 @@
+{
+  "name": "fileshot-desktop",
+  "version": "1.0.0",
+  "description": "FileShot.io Desktop Application - Fast, Private File Sharing",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "start:prod": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "keywords": [
+    "file-sharing",
+    "encryption",
+    "zero-knowledge",
+    "privacy",
+    "fileshot"
+  ],
+  "author": {
+    "name": "FileShot.io",
+    "email": "admin@fileshot.io",
+    "url": "https://fileshot.io"
+  },
+  "license": "MIT",
+  "build": {
+    "appId": "io.fileshot.desktop",
+    "productName": "FileShot",
+    "copyright": "Copyright © 2025 FileShot.io",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "assets/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64", "ia32"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "FileShot-Setup-${version}.${ext}",
+      "publisherName": "FileShot.io",
+      "verifyUpdateCodeSignature": false,
+      "sign": null,
+      "signingHashAlgorithms": []
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "FileShot",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true,
+      "menuCategory": true
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "window": {
+        "width": 540,
+        "height": 380
+      }
+    },
+    "linux": {
+      "target": ["AppImage", "deb", "rpm"],
+      "icon": "build/icons",
+      "category": "Network",
+      "maintainer": "admin@fileshot.io",
+      "vendor": "FileShot.io",
+      "synopsis": "Fast, Private File Sharing"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "FileShot",
+      "repo": "fileshot-desktop",
+      "private": false
+    }
+  },
+  "dependencies": {
+    "electron-updater": "^6.1.7",
+    "axios": "^1.6.5",
+    "form-data": "^4.0.0",
+    "electron-store": "^8.1.0",
+    "node-notifier": "^10.0.1"
+  },
+  "devDependencies": {
+    "electron": "^28.1.0",
+    "electron-builder": "^24.9.1"
+  }
+}
