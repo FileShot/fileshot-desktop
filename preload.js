@@ -8,6 +8,11 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   // API configuration
   getApiUrl: () => ipcRenderer.invoke('get-api-url'),
+  onApiConfig: (callback) => {
+    ipcRenderer.on('api-config', (_event, config) => {
+      try { callback(config); } catch (_) {}
+    });
+  },
   
   // Authentication
   getAuthToken: () => ipcRenderer.invoke('get-auth-token'),

@@ -1,7 +1,21 @@
 /**
- * FileShot Offline Desktop App - Main Application Logic
- * Handles sidebar navigation, drag-drop, storage management, and secure shredding
+ * FileShot Desktop App - Hybrid UI
+ * Local sidebar + file explorer connected to live API
  */
+
+// ============================================================================
+// API CONFIGURATION
+// ============================================================================
+
+let API_URL = 'https://api.fileshot.io/api'; // Default to live API
+
+// Receive API config from main process
+if (window.electronAPI) {
+  window.electronAPI.onApiConfig?.((config) => {
+    API_URL = config.apiUrl;
+    console.log('[FileShot Desktop] API configured:', API_URL);
+  });
+}
 
 // ============================================================================
 // STATE MANAGEMENT
@@ -16,7 +30,9 @@ const state = {
   settings: {
     autoLock: false,
     requirePin: false
-  }
+  },
+  authToken: localStorage.getItem('fileshot_token') || null,
+  userId: localStorage.getItem('fileshot_userId') || null
 };
 
 // ============================================================================

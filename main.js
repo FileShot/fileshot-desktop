@@ -106,6 +106,21 @@ async function loadFrontend({ preferredPath = '/', reason = '' } = {}) {
 
   const safePath = String(preferredPath || '/').startsWith('/') ? String(preferredPath || '/') : '/';
 
+  // Load the local desktop UI with sidebar + file explorer connected to live API
+  const localUIUrl = `file://${LOCAL_UI_INDEX}`;
+  console.log('[FileShot] Loading desktop UI:', localUIUrl, reason ? `(${reason})` : '');
+  await mainWindow.loadFile(LOCAL_UI_INDEX);
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainWindow.webContents.send('api-config', { apiUrl: API_URL });
+  });
+  return;
+}
+
+async function loadFrontendFallback({ preferredPath = '/', reason = '' } = {}) {
+  if (!mainWindow) return;
+
+  const safePath = String(preferredPath || '/').startsWith('/') ? String(preferredPath || '/') : '/';
+
   // Dev: always use local dev server.
   if (isDev) {
     const url = `http://localhost:8080${safePath}`;
