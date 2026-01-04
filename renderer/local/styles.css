@@ -7,9 +7,9 @@
   --border: rgba(255,255,255,0.09);
   --text: #e8eef6;
   --text-secondary: rgba(232,238,246,0.68);
-  --accent: #3b82f6;
-  --accent-hover: #2563eb;
-  --accent2: #f97316;
+  --accent: #f97316;
+  --accent-hover: #ea580c;
+  --accent2: #3b82f6;
   --ok: #10b981;
   --sidebar-width: 260px;
   --sidebar-width-collapsed: 80px;
@@ -60,10 +60,10 @@ body {
 .btn { border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 10px; padding: 9px 12px; cursor: pointer; font-weight: 600; font-size: 13px; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; }
 .btn:hover { background: var(--panel-hover); }
 .btn:active { transform: scale(0.98); }
-.btn-primary { border-color: rgba(59, 130, 246, 0.45); background: rgba(59, 130, 246, 0.16); color: var(--accent); }
-.btn-primary:hover { background: rgba(59, 130, 246, 0.22); }
-.btn-secondary { border-color: rgba(249, 115, 22, 0.35); background: rgba(249, 115, 22, 0.12); color: var(--accent2); }
-.btn-secondary:hover { background: rgba(249, 115, 22, 0.18); }
+.btn-primary { border-color: rgba(249, 115, 22, 0.45); background: rgba(249, 115, 22, 0.16); color: var(--accent); }
+.btn-primary:hover { background: rgba(249, 115, 22, 0.22); }
+.btn-secondary { border-color: rgba(59, 130, 246, 0.35); background: rgba(59, 130, 246, 0.12); color: var(--accent2); }
+.btn-secondary:hover { background: rgba(59, 130, 246, 0.18); }
 .btn-danger { border-color: rgba(239, 68, 68, 0.55); background: rgba(239, 68, 68, 0.20); color: #ef4444; }
 .btn-danger:hover { background: rgba(239, 68, 68, 0.28); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
