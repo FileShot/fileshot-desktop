@@ -166,14 +166,11 @@ function createWindow() {
     autoHideMenuBar: true
   });
 
-  // v1.2+: Local-first UI is the default.
-  // "Go Online" explicitly loads the hosted web app.
-  try {
-    mainWindow.loadFile(LOCAL_UI_INDEX);
-  } catch (e) {
-    console.error('[FileShot] Failed to load local UI, falling back:', e);
-    loadFrontend({ preferredPath: '/', reason: 'startup-fallback' }).catch(() => {});
-  }
+  // Primary behavior: load the live cloud app first.
+  // If offline/unreachable, load bundled/offline fallbacks inside loadFrontend.
+  loadFrontend({ preferredPath: '/', reason: 'startup' }).catch((e) => {
+    console.error('[FileShot] Failed initial load, will rely on fallback handler', e);
+  });
 
   if (isDev) {
     console.log('[FileShot] Development mode enabled');

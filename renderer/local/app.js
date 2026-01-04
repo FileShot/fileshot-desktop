@@ -28,6 +28,7 @@ const DOM = {
   sidebar: () => document.getElementById('sidebar'),
   btnCollapse: () => document.getElementById('btnCollapse'),
   navItems: () => document.querySelectorAll('.nav-item'),
+  goOnlineBtn: () => document.getElementById('btnGoOnline'),
   
   // Main content
   topbarLeft: () => document.querySelector('.topbar-left'),
@@ -86,6 +87,7 @@ function fmtBytes(n) {
 
 window.addEventListener('DOMContentLoaded', () => {
   initSidebar();
+  initGoOnline();
   initDropZone();
   initToolPanels();
   initVaultTool();
@@ -103,12 +105,34 @@ window.addEventListener('DOMContentLoaded', () => {
 
 function initSidebar() {
   DOM.btnCollapse().addEventListener('click', toggleSidebar);
+
+  // Hide unfinished tools to avoid placeholders
+  ['pdf', 'image', 'text'].forEach(tool => {
+    const nav = document.querySelector(`.nav-item[data-tool="${tool}"]`);
+    const panel = DOM.toolPanel(tool);
+    if (nav) nav.style.display = 'none';
+    if (panel) panel.hidden = true;
+  });
   
   DOM.navItems().forEach(item => {
     item.addEventListener('click', (e) => {
       const tool = e.currentTarget.dataset.tool;
       switchToTool(tool);
     });
+  });
+}
+
+function initGoOnline() {
+  const btn = DOM.goOnlineBtn();
+  if (!btn || !window.electronAPI || typeof window.electronAPI.goOnline !== 'function') return;
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      await window.electronAPI.goOnline();
+    } finally {
+      btn.disabled = false;
+    }
   });
 }
 
