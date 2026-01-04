@@ -98,42 +98,10 @@
         </button>
       </nav>
 
-      <!-- Sidebar File Explorer -->
-      <section class="sidebar-explorer" id="sidebarExplorer" aria-label="File Explorer">
-        <div class="explorer-header">
-          <div class="explorer-title">Explorer</div>
-          <div class="explorer-actions">
-            <button class="icon-btn" id="btnExplorerView" title="Toggle view">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="3" y="3" width="7" height="7"></rect>
-                <rect x="14" y="3" width="7" height="7"></rect>
-                <rect x="3" y="14" width="7" height="7"></rect>
-                <rect x="14" y="14" width="7" height="7"></rect>
-              </svg>
-            </button>
-            <button class="icon-btn" id="btnExplorerUp" title="Up">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 19V5"/>
-                <polyline points="5 12 12 5 19 12"/>
-              </svg>
-            </button>
-            <button class="icon-btn" id="btnExplorerRefresh" title="Refresh">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="23 4 23 10 17 10"/>
-                <polyline points="1 20 1 14 7 14"/>
-                <path d="M3.51 9a9 9 0 0 1 14.13-3.36L23 10"/>
-                <path d="M20.49 15a9 9 0 0 1-14.13 3.36L1 14"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-        <div class="explorer-path" id="explorerPath">Loading…</div>
-        <div class="explorer-list" id="explorerList"></div>
-        <div class="explorer-hint">Drag files/folders into the app to add to Local Vault.</div>
-      </section>
+      <!-- Sidebar File Explorer - REMOVED, moved to right panel -->
 
       <div class="sidebar-footer">
-        <button class="btn btn-secondary btn-full" id="btnGoOnline">
+        <button class="btn btn-primary btn-full" id="btnGoOnline">
           <span>Go Online</span>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
@@ -164,6 +132,11 @@
           <h1 id="toolTitle">Local Vault</h1>
         </div>
         <div class="topbar-right">
+          <button class="icon-btn" id="btnToggleExplorer" title="Toggle File Explorer">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+            </svg>
+          </button>
           <span id="storageStatus" class="status-badge"></span>
         </div>
       </header>
@@ -419,7 +392,7 @@
           <div class="settings-card">
             <h3>About</h3>
             <div class="info-row">
-              <span>FileShot Desktop v1.2.0</span>
+              <span>FileShot Desktop v1.4.0</span>
               <span class="muted">Offline-first encryption</span>
             </div>
             <div class="info-row" style="margin-top: 8px;">
@@ -430,6 +403,43 @@
         </section>
       </div>
     </main>
+
+    <!-- Resize Handle -->
+    <div class="resize-handle" id="resizeHandle"></div>
+
+    <!-- Right Sidebar: File Explorer -->
+    <aside class="explorer-sidebar" id="explorerSidebar">
+      <div class="explorer-header">
+        <div class="explorer-title">File Explorer</div>
+        <div class="explorer-actions">
+          <button class="icon-btn" id="btnExplorerView" title="Toggle grid/list view">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7"></rect>
+              <rect x="14" y="3" width="7" height="7"></rect>
+              <rect x="3" y="14" width="7" height="7"></rect>
+              <rect x="14" y="14" width="7" height="7"></rect>
+            </svg>
+          </button>
+          <button class="icon-btn" id="btnExplorerUp" title="Go up">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 19V5"/>
+              <polyline points="5 12 12 5 19 12"/>
+            </svg>
+          </button>
+          <button class="icon-btn" id="btnExplorerRefresh" title="Refresh">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10"/>
+              <polyline points="1 20 1 14 7 14"/>
+              <path d="M3.51 9a9 9 0 0 1 14.13-3.36L23 10"/>
+              <path d="M20.49 15a9 9 0 0 1-14.13 3.36L1 14"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="explorer-path" id="explorerPath">Loading…</div>
+      <div class="explorer-list" id="explorerList"></div>
+      <div class="explorer-hint">Drag files to main area or external apps. Ctrl/Shift for multi-select.</div>
+    </aside>
   </div>
 
   <script src="./app.js"></script>

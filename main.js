@@ -374,10 +374,10 @@ function createWindow() {
     mainWindow.show();
   });
 
-  // Handle window close - allow actual close, don't prevent it
+  // Handle window close - fully quit the app
   mainWindow.on('close', (event) => {
-    // Allow the window to close normally
-    // Don't minimize to tray on close
+    // Quit the entire application when window is closed
+    app.quit();
   });
 
   // Handle external links

@@ -55,6 +55,11 @@ const DOM = {
   navItems: () => document.querySelectorAll('.nav-item[data-tool]'),
   goOnlineBtn: () => document.getElementById('btnGoOnline'),
 
+  // Explorer sidebar (right side)
+  explorerSidebar: () => document.getElementById('explorerSidebar'),
+  resizeHandle: () => document.getElementById('resizeHandle'),
+  btnToggleExplorer: () => document.getElementById('btnToggleExplorer'),
+
   // Tools menu
   toolsToggleBtn: () => document.getElementById('btnToolsToggle'),
   toolsSubmenu: () => document.getElementById('toolsSubmenu'),
@@ -146,11 +151,60 @@ window.addEventListener('DOMContentLoaded', () => {
   initShredTool();
   initSettingsTool();
   initExplorer();
+  initExplorerResize();
   initVaultSync();
   loadSettings();
   refreshVault();
   switchToTool('vault');
 });
+
+// ============================================================================
+// EXPLORER RESIZE & TOGGLE
+// ============================================================================
+
+function initExplorerResize() {
+  const handle = DOM.resizeHandle();
+  const explorer = DOM.explorerSidebar();
+  const toggleBtn = DOM.btnToggleExplorer();
+
+  if (!handle || !explorer) return;
+
+  // Toggle explorer visibility
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', () => {
+      explorer.classList.toggle('hidden');
+      handle.style.display = explorer.classList.contains('hidden') ? 'none' : '';
+    });
+  }
+
+  // Resize functionality
+  let isResizing = false;
+
+  handle.addEventListener('mousedown', (e) => {
+    isResizing = true;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!isResizing) return;
+    const containerRect = document.querySelector('.app-container').getBoundingClientRect();
+    const newWidth = containerRect.right - e.clientX;
+    const clampedWidth = Math.max(200, Math.min(450, newWidth));
+    explorer.style.width = clampedWidth + 'px';
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (isResizing) {
+      isResizing = false;
+      handle.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+  });
+}
 
 // ============================================================================
 // MAIN-PROCESS VAULT SYNC
