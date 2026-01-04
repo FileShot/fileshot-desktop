@@ -153,37 +153,51 @@ function switchToTool(toolName) {
 // DRAG & DROP
 // ============================================================================
 
+let dragCounter = 0;
+
 function initDropZone() {
-  const appContainer = document.querySelector('.app-container');
   const dropZone = DOM.dropZone();
   
-  // Show drop zone on drag over
-  appContainer.addEventListener('dragover', (e) => {
+  // Ensure drop zone is hidden on init
+  dropZone.hidden = true;
+  dragCounter = 0;
+  
+  // Listen on document level for drag events
+  document.addEventListener('dragenter', (e) => {
     e.preventDefault();
-    e.stopPropagation();
-    dropZone.hidden = false;
+    dragCounter++;
+    if (dragCounter === 1) {
+      dropZone.hidden = false;
+    }
   });
   
-  appContainer.addEventListener('dragleave', (e) => {
+  document.addEventListener('dragleave', (e) => {
     e.preventDefault();
-    if (e.target === appContainer) {
+    dragCounter--;
+    if (dragCounter === 0) {
       dropZone.hidden = true;
     }
   });
   
+  document.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  
   // Handle file drop
-  dropZone.addEventListener('drop', handleFileDrop);
-  appContainer.addEventListener('drop', handleFileDrop);
+  document.addEventListener('drop', handleFileDrop);
 }
 
 function handleFileDrop(e) {
   e.preventDefault();
   e.stopPropagation();
   
+  // Reset drag counter and hide drop zone
+  dragCounter = 0;
   DOM.dropZone().hidden = true;
   
-  const files = e.dataTransfer.files;
-  if (files.length === 0) return;
+  const files = e.dataTransfer?.files;
+  if (!files || files.length === 0) return;
   
   // Switch to vault tool
   switchToTool('vault');

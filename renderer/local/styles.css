@@ -49,7 +49,8 @@ body {
 .topbar-right { display: flex; gap: 12px; align-items: center; }
 .status-badge { font-size: 12px; color: var(--text-secondary); background: var(--panel); padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); }
 
-.drop-zone { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.8); display: flex; align-items: center; justify-content: center; z-index: 9999; backdrop-filter: blur(4px); }
+.drop-zone { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); display: none; align-items: center; justify-content: center; z-index: 9999; backdrop-filter: blur(4px); pointer-events: all; }
+.drop-zone:not([hidden]) { display: flex; }
 .drop-zone-content { display: flex; flex-direction: column; align-items: center; gap: 16px; color: var(--text); pointer-events: none; }
 .drop-zone-content svg { color: var(--accent); opacity: 0.9; }
 .drop-zone-text { font-size: 18px; font-weight: 600; }
