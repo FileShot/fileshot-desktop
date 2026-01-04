@@ -37,7 +37,7 @@ body {
 .nav-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: transparent; border: 1px solid transparent; color: var(--text-secondary); border-radius: 10px; cursor: pointer; font-size: 14px; transition: all 0.2s; white-space: nowrap; }
 .nav-item svg { flex-shrink: 0; }
 .nav-item:hover { background: var(--panel-hover); color: var(--text); }
-.nav-item.active { background: rgba(59, 130, 246, 0.16); border-color: rgba(59, 130, 246, 0.45); color: var(--accent); }
+.nav-item.active { background: rgba(249, 115, 22, 0.16); border-color: rgba(249, 115, 22, 0.45); color: var(--accent); }
 .sidebar.collapsed .nav-item span:not(svg) { display: none; }
 .sidebar-divider { height: 1px; background: var(--border); margin: 8px 0; }
 .sidebar-footer { padding: 12px; border-top: 1px solid var(--border); }
@@ -70,6 +70,7 @@ body {
 
 .tools-container { flex: 1; overflow: auto; padding: 24px; position: relative; }
 .tool-panel { display: none; max-width: 1200px; margin: 0 auto; }
+.tool-panel:not([hidden]) { display: block; }
 .panel-actions { display: flex; gap: 10px; margin-bottom: 20px; }
 .status { font-size: 13px; color: var(--text-secondary); margin-bottom: 16px; padding: 8px 12px; background: var(--panel); border-radius: 8px; border: 1px solid var(--border); }
 
