@@ -27,12 +27,14 @@ body {
 
 .app-container { display: flex; height: 100vh; }
 
-.sidebar { width: var(--sidebar-width); background: var(--bg-secondary); border-right: 1px solid var(--border); display: flex; flex-direction: column; transition: width 0.3s ease; overflow: hidden; }
+.sidebar { width: var(--sidebar-width); background: var(--bg-secondary); border-right: 1px solid var(--border); display: flex; flex-direction: column; transition: width 0.3s ease; overflow: visible; }
 .sidebar.collapsed { width: var(--sidebar-width-collapsed); }
+.sidebar.collapsed .sidebar-header { justify-content: center; padding: 16px 8px; }
+.sidebar.collapsed .logo-img { display: none; }
 .sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 12px; border-bottom: 1px solid var(--border); }
 .logo-img { height: 22px; width: auto; object-fit: contain; border-radius: 3px; }
-.btn-collapse { background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 8px; display: flex; border-radius: 8px; transition: background 0.2s; }
-.btn-collapse:hover { background: var(--panel-hover); }
+.btn-collapse { background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 8px; display: flex; border-radius: 8px; transition: background 0.2s; flex-shrink: 0; }
+.btn-collapse:hover { background: var(--panel-hover); color: var(--text); }
 .sidebar-nav { flex: 1; display: flex; flex-direction: column; gap: 4px; padding: 12px; overflow-y: auto; }
 .nav-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: transparent; border: 1px solid transparent; color: var(--text-secondary); border-radius: 10px; cursor: pointer; font-size: 14px; transition: all 0.2s; white-space: nowrap; }
 .nav-item svg { flex-shrink: 0; }
@@ -46,7 +48,12 @@ body {
 .tools-submenu[hidden] { display: none; }
 .nav-subitem { width: 100%; background: transparent; border: 0; color: var(--text); text-align: left; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; opacity: 0.92; }
 .nav-subitem:hover { background: rgba(255, 255, 255, 0.06); opacity: 1; }
-.sidebar.collapsed .nav-item span:not(svg) { display: none; }
+.sidebar.collapsed .nav-item span { display: none; }
+.sidebar.collapsed .nav-item { justify-content: center; padding: 10px; }
+.sidebar.collapsed .nav-item .chev { display: none; }
+.sidebar.collapsed .tools-submenu { display: none; }
+.sidebar.collapsed .sidebar-footer .btn span { display: none; }
+.sidebar.collapsed .sidebar-footer .btn { padding: 10px; justify-content: center; }
 .sidebar-divider { height: 1px; background: var(--border); margin: 8px 0; }
 .sidebar-footer { padding: 12px; border-top: 1px solid var(--border); }
 .btn-full { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; }

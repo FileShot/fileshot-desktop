@@ -1,6 +1,6 @@
 {
   "name": "fileshot-desktop",
-  "version": "1.4.5",
+  "version": "1.4.6",
   "description": "FileShot.io Desktop Application - Fast, Private File Sharing",
   "main": "main.js",
   "scripts": {
@@ -65,18 +65,23 @@
       "signingHashAlgorithms": []
     },
     "nsis": {
-      "oneClick": true,
+      "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": false,
-      "createDesktopShortcut": true,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
       "shortcutName": "FileShot",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico",
+      "installerSidebar": null,
+      "uninstallerSidebar": null,
       "deleteAppDataOnUninstall": false,
       "runAfterFinish": true,
-      "menuCategory": true
+      "menuCategory": true,
+      "license": null,
+      "installerLanguages": ["en_US"]
     },
     "mac": {
       "target": ["dmg", "zip"],
