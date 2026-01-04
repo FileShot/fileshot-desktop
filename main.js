@@ -69,9 +69,9 @@ function safeStat(p) {
 
 /**
  * Add a file to the vault with AES-256-GCM encryption.
- * The file is encrypted using a randomly generated key stored in the vault metadata.
+ * Uses password-based encryption with PBKDF2 key derivation.
  */
-async function addFileToVault(sourcePath) {
+async function addFileToVault(sourcePath, passphrase) {
   ensureVaultDirs();
   const st = safeStat(sourcePath);
   if (!st || !st.isFile()) return null;
@@ -81,12 +81,13 @@ async function addFileToVault(sourcePath) {
   const storedName = `${id}.fszk`; // Always use .fszk extension for encrypted files
   const destPath = path.join(getVaultFilesDir(), storedName);
 
-  // Encrypt the file using ZKE format
+  // Encrypt the file using ZKE format with PASSWORD-BASED encryption
   const result = await encryptFileToZkeContainer({
     inputPath: sourcePath,
     outputPath: destPath,
     originalName: name,
-    mode: 'raw' // Use random key (stored in vault metadata)
+    mode: 'passphrase', // Use password-based encryption
+    passphrase: passphrase
   });
 
   const encryptedStat = safeStat(destPath);
@@ -100,7 +101,8 @@ async function addFileToVault(sourcePath) {
     localPath: destPath,
     sourcePath,
     encrypted: true,
-    encryptionKey: result.rawKey // Base64url encoded AES-256 key
+    encryptionMode: 'passphrase' // Indicate password-based encryption
+    // Note: No key stored - user must remember password
   };
 }
 
@@ -1014,14 +1016,17 @@ ipcMain.handle('vault-list', async () => {
   return { items, totalBytes: vaultTotalBytes(items) };
 });
 
-ipcMain.handle('vault-add', async (_event, paths) => {
+ipcMain.handle('vault-add', async (_event, { paths, passphrase }) => {
   const list = Array.isArray(paths) ? paths : [];
+  if (!passphrase || passphrase.length < 4) {
+    return { success: false, error: 'Password must be at least 4 characters' };
+  }
   const items = getVaultItems();
   let added = 0;
 
   for (const p of list) {
     try {
-      const entry = await addFileToVault(p);
+      const entry = await addFileToVault(p, passphrase);
       if (entry) {
         items.unshift(entry);
         added++;
@@ -1035,8 +1040,11 @@ ipcMain.handle('vault-add', async (_event, paths) => {
   return { success: true, added };
 });
 
-ipcMain.handle('vault-add-folder', async (_event, folderPath) => {
+ipcMain.handle('vault-add-folder', async (_event, { folderPath, passphrase }) => {
   const folder = String(folderPath || '');
+  if (!passphrase || passphrase.length < 4) {
+    return { success: false, error: 'Password must be at least 4 characters' };
+  }
   const st = safeStat(folder);
   if (!st || !st.isDirectory()) return { success: false, error: 'Folder not found' };
 
@@ -1046,7 +1054,7 @@ ipcMain.handle('vault-add-folder', async (_event, folderPath) => {
 
   for (const p of files) {
     try {
-      const entry = await addFileToVault(p);
+      const entry = await addFileToVault(p, passphrase);
       if (entry) {
         items.unshift(entry);
         added++;
@@ -1081,41 +1089,34 @@ ipcMain.handle('vault-remove', async (_event, localId) => {
   return { success: true };
 });
 
-ipcMain.handle('vault-reveal-key', async (_event, localId) => {
-  const id = String(localId || '');
-  const items = getVaultItems();
-  const it = items.find((x) => String(x.id) === id);
-  if (!it) return { success: false };
-  // Return the encryption key for this vault item
-  return { 
-    success: true, 
-    encryptionKey: it.encryptionKey || null,
-    shareKey: it?.lastUpload?.shareKey || null, 
-    shareUrl: it?.lastUpload?.shareUrl || null 
-  };
-});
-
 // Open/preview a vault file by decrypting to temp and opening
-ipcMain.handle('vault-open', async (_event, localId) => {
+ipcMain.handle('vault-open', async (_event, { localId, passphrase }) => {
   const id = String(localId || '');
   const items = getVaultItems();
   const it = items.find((x) => String(x.id) === id);
   if (!it) return { success: false, error: 'Not found' };
   if (!it.localPath || !fs.existsSync(it.localPath)) return { success: false, error: 'File missing' };
 
-  // For encrypted files, decrypt to temp folder
-  if (it.encrypted && it.encryptionKey) {
+  // Encrypted files require password to decrypt
+  if (it.encrypted) {
+    if (!passphrase) {
+      return { success: false, error: 'Password required', needPassword: true };
+    }
     try {
       ensureVaultDirs();
       const tmpPath = path.join(getVaultTmpDir(), it.name);
       await decryptZkeContainer({
         inputPath: it.localPath,
         outputPath: tmpPath,
-        rawKeyBase64Url: it.encryptionKey
+        passphrase: passphrase
       });
       await shell.openPath(tmpPath);
       return { success: true, tmpPath };
     } catch (e) {
+      // Check if it's a decryption error (wrong password)
+      if (e.message && (e.message.includes('decrypt') || e.message.includes('auth') || e.message.includes('tag'))) {
+        return { success: false, error: 'Incorrect password', wrongPassword: true };
+      }
       return { success: false, error: e.message || String(e) };
     }
   }
@@ -1130,12 +1131,17 @@ ipcMain.handle('vault-open', async (_event, localId) => {
 });
 
 // Export a single vault file (decrypt and save to user-chosen location)
-ipcMain.handle('vault-export-file', async (_event, localId) => {
+ipcMain.handle('vault-export-file', async (_event, { localId, passphrase }) => {
   const id = String(localId || '');
   const items = getVaultItems();
   const it = items.find((x) => String(x.id) === id);
   if (!it) return { success: false, error: 'Not found' };
   if (!it.localPath || !fs.existsSync(it.localPath)) return { success: false, error: 'File missing' };
+
+  // Check password requirement first
+  if (it.encrypted && !passphrase) {
+    return { success: false, error: 'Password required', needPassword: true };
+  }
 
   const result = await dialog.showSaveDialog(mainWindow, {
     defaultPath: it.name,
@@ -1144,15 +1150,18 @@ ipcMain.handle('vault-export-file', async (_event, localId) => {
 
   if (result.canceled || !result.filePath) return { success: false, canceled: true };
 
-  if (it.encrypted && it.encryptionKey) {
+  if (it.encrypted) {
     try {
       await decryptZkeContainer({
         inputPath: it.localPath,
         outputPath: result.filePath,
-        rawKeyBase64Url: it.encryptionKey
+        passphrase: passphrase
       });
       return { success: true, path: result.filePath };
     } catch (e) {
+      if (e.message && (e.message.includes('decrypt') || e.message.includes('auth') || e.message.includes('tag'))) {
+        return { success: false, error: 'Incorrect password', wrongPassword: true };
+      }
       return { success: false, error: e.message || String(e) };
     }
   }

@@ -30,12 +30,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Local vault
   vaultList: () => ipcRenderer.invoke('vault-list'),
-  vaultAdd: (paths) => ipcRenderer.invoke('vault-add', paths),
-  vaultAddFolder: (folderPath) => ipcRenderer.invoke('vault-add-folder', folderPath),
+  vaultAdd: (paths, passphrase) => ipcRenderer.invoke('vault-add', { paths, passphrase }),
+  vaultAddFolder: (folderPath, passphrase) => ipcRenderer.invoke('vault-add-folder', { folderPath, passphrase }),
   vaultRemove: (localId) => ipcRenderer.invoke('vault-remove', localId),
-  vaultRevealKey: (localId) => ipcRenderer.invoke('vault-reveal-key', localId),
-  vaultOpen: (localId) => ipcRenderer.invoke('vault-open', localId),
-  vaultExportFile: (localId) => ipcRenderer.invoke('vault-export-file', localId),
+  vaultOpen: (localId, passphrase) => ipcRenderer.invoke('vault-open', { localId, passphrase }),
+  vaultExportFile: (localId, passphrase) => ipcRenderer.invoke('vault-export-file', { localId, passphrase }),
   vaultExportAll: () => ipcRenderer.invoke('vault-export-all'),
   vaultImport: () => ipcRenderer.invoke('vault-import'),
 

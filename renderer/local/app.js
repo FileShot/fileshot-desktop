@@ -25,6 +25,8 @@ const state = {
   currentTool: 'vault',
   sidebarCollapsed: false,
   vaultFiles: [],
+  vaultSelectedFiles: [], // Selected file IDs for batch operations
+  vaultViewMode: 'list', // 'list' | 'grid'
   storageUsage: { used: 0, total: 0 },
   shredProgress: { current: 0, total: 0, isRunning: false },
   shredCustomPaths: [],
@@ -41,7 +43,17 @@ const state = {
     requirePin: false
   },
   authToken: localStorage.getItem('fileshot_token') || null,
-  userId: localStorage.getItem('fileshot_userId') || null
+  userId: localStorage.getItem('fileshot_userId') || null,
+  // Password modal state
+  passwordModal: {
+    isOpen: false,
+    mode: 'encrypt', // 'encrypt' | 'decrypt'
+    files: [],
+    fileId: null,
+    callback: null
+  },
+  // Session password (if user chooses to save)
+  sessionPassword: null
 };
 
 // ============================================================================
@@ -78,12 +90,41 @@ const DOM = {
   // Specific tools
   vaultAddBtn: () => document.getElementById('btnAddFiles'),
   vaultAddFolderBtn: () => document.getElementById('btnAddFolder'),
+  vaultUploadBtn: () => document.getElementById('btnUploadVault'),
+  vaultSelectAllBtn: () => document.getElementById('btnSelectAll'),
+  vaultSelectNoneBtn: () => document.getElementById('btnSelectNone'),
+  vaultDeleteSelectedBtn: () => document.getElementById('btnDeleteSelected'),
+  vaultSelectionCount: () => document.getElementById('selectionCount'),
+  vaultGridViewBtn: () => document.getElementById('btnVaultGridView'),
+  vaultListViewBtn: () => document.getElementById('btnVaultListView'),
   vaultList: () => document.getElementById('vaultList'),
+  vaultEmpty: () => document.getElementById('vaultEmpty'),
   vaultStatus: () => document.getElementById('vaultStatus'),
-  // Legacy upload UI (not currently present in local index.html)
-  vaultUploadBtn: () => null,
-  vaultUploadPassword: () => null,
-  vaultUploadProtect: () => null,
+  
+  // Password modals
+  passwordModal: () => document.getElementById('passwordModal'),
+  passwordModalTitle: () => document.getElementById('passwordModalTitle'),
+  passwordModalSubtitle: () => document.getElementById('passwordModalSubtitle'),
+  encryptPassword: () => document.getElementById('encryptPassword'),
+  confirmPassword: () => document.getElementById('confirmPassword'),
+  confirmPasswordGroup: () => document.getElementById('confirmPasswordGroup'),
+  btnGeneratePassword: () => document.getElementById('btnGeneratePassword'),
+  btnCopyPassword: () => document.getElementById('btnCopyPassword'),
+  btnTogglePassword: () => document.getElementById('btnTogglePassword'),
+  chkSavePassword: () => document.getElementById('chkSavePassword'),
+  strengthFill: () => document.getElementById('strengthFill'),
+  strengthText: () => document.getElementById('strengthText'),
+  filesToEncrypt: () => document.getElementById('filesToEncrypt'),
+  btnCancelPassword: () => document.getElementById('btnCancelPassword'),
+  btnConfirmPassword: () => document.getElementById('btnConfirmPassword'),
+  
+  decryptModal: () => document.getElementById('decryptModal'),
+  decryptFileName: () => document.getElementById('decryptFileName'),
+  decryptPassword: () => document.getElementById('decryptPassword'),
+  btnToggleDecryptPassword: () => document.getElementById('btnToggleDecryptPassword'),
+  decryptError: () => document.getElementById('decryptError'),
+  btnCancelDecrypt: () => document.getElementById('btnCancelDecrypt'),
+  btnConfirmDecrypt: () => document.getElementById('btnConfirmDecrypt'),
   
   storageUsedValue: () => document.getElementById('storageUsed'),
   storageFreeValue: () => document.getElementById('storageFree'),
@@ -447,7 +488,8 @@ function handleFileDrop(e) {
       .filter(Boolean);
     if (paths.length) {
       switchToTool('vault');
-      addPathsToVault(paths);
+      // Show password modal instead of direct add
+      showPasswordModal(paths, 'encrypt');
     }
     return;
   }
@@ -470,9 +512,14 @@ function handleFileDrop(e) {
 
     if (filesOnly.length || dirsOnly.length) {
       switchToTool('vault');
-      if (filesOnly.length) addPathsToVault(filesOnly);
-      // Directories are expanded in main process; do them after
-      dirsOnly.forEach((d) => addFolderToVault(d));
+      // Show password modal for files
+      if (filesOnly.length) {
+        showPasswordModal(filesOnly, 'encrypt');
+      }
+      // Directories need their own password modal
+      if (dirsOnly.length) {
+        dirsOnly.forEach((d) => addFolderToVaultWithPassword(d));
+      }
     }
     return;
   }
@@ -493,8 +540,456 @@ function handleFileDrop(e) {
 function initVaultTool() {
   const addBtn = DOM.vaultAddBtn();
   const addFolderBtn = DOM.vaultAddFolderBtn();
+  const uploadBtn = DOM.vaultUploadBtn();
+  const gridViewBtn = DOM.vaultGridViewBtn();
+  const listViewBtn = DOM.vaultListViewBtn();
+  const selectAllBtn = DOM.vaultSelectAllBtn();
+  const selectNoneBtn = DOM.vaultSelectNoneBtn();
+  const deleteSelectedBtn = DOM.vaultDeleteSelectedBtn();
+  
   if (addBtn) addBtn.addEventListener('click', pickFiles);
   if (addFolderBtn) addFolderBtn.addEventListener('click', pickFolder);
+  if (uploadBtn) uploadBtn.addEventListener('click', uploadVaultToFileShot);
+  if (selectAllBtn) selectAllBtn.addEventListener('click', selectAllVaultFiles);
+  if (selectNoneBtn) selectNoneBtn.addEventListener('click', selectNoneVaultFiles);
+  if (deleteSelectedBtn) deleteSelectedBtn.addEventListener('click', deleteSelectedVaultFiles);
+  
+  // View toggle buttons
+  if (gridViewBtn) gridViewBtn.addEventListener('click', () => setVaultViewMode('grid'));
+  if (listViewBtn) listViewBtn.addEventListener('click', () => setVaultViewMode('list'));
+  
+  // Initialize password modal
+  initPasswordModal();
+}
+
+// ============================================================================
+// VAULT FILE SELECTION
+// ============================================================================
+
+function toggleVaultFileSelection(fileId, event) {
+  const idx = state.vaultSelectedFiles.indexOf(fileId);
+  if (idx > -1) {
+    state.vaultSelectedFiles.splice(idx, 1);
+  } else {
+    state.vaultSelectedFiles.push(fileId);
+  }
+  updateVaultSelection();
+}
+
+function selectAllVaultFiles() {
+  state.vaultSelectedFiles = state.vaultFiles.map(f => String(f.id));
+  updateVaultSelection();
+}
+
+function selectNoneVaultFiles() {
+  state.vaultSelectedFiles = [];
+  updateVaultSelection();
+}
+
+function updateVaultSelection() {
+  // Update selection count
+  const countEl = DOM.vaultSelectionCount();
+  if (countEl) {
+    const count = state.vaultSelectedFiles.length;
+    countEl.textContent = count === 0 ? '0 selected' : `${count} selected`;
+  }
+  
+  // Update visual selection on items
+  const vaultList = DOM.vaultList();
+  if (vaultList) {
+    vaultList.querySelectorAll('.vault-item').forEach(el => {
+      const id = el.dataset.id;
+      const isSelected = state.vaultSelectedFiles.includes(id);
+      el.classList.toggle('selected', isSelected);
+      const checkbox = el.querySelector('input[type="checkbox"]');
+      if (checkbox) checkbox.checked = isSelected;
+    });
+  }
+}
+
+async function deleteSelectedVaultFiles() {
+  if (state.vaultSelectedFiles.length === 0) {
+    alert('No files selected. Select files using the checkboxes first.');
+    return;
+  }
+  
+  const count = state.vaultSelectedFiles.length;
+  if (!confirm(`Delete ${count} selected file${count > 1 ? 's' : ''} from the vault?\n\nThis will permanently remove the encrypted files.`)) {
+    return;
+  }
+  
+  if (!window.electronAPI?.vaultRemove) {
+    alert('Delete feature not available');
+    return;
+  }
+  
+  let deleted = 0;
+  for (const id of state.vaultSelectedFiles) {
+    try {
+      await window.electronAPI.vaultRemove(id);
+      deleted++;
+    } catch (e) {
+      console.error(`Failed to delete ${id}:`, e);
+    }
+  }
+  
+  state.vaultSelectedFiles = [];
+  updateVaultSelection();
+  refreshVault();
+  
+  if (deleted > 0) {
+    console.log(`Deleted ${deleted} file(s) from vault`);
+  }
+}
+
+function setVaultViewMode(mode) {
+  state.vaultViewMode = mode;
+  const vaultList = DOM.vaultList();
+  const gridBtn = DOM.vaultGridViewBtn();
+  const listBtn = DOM.vaultListViewBtn();
+  
+  if (vaultList) {
+    vaultList.classList.remove('vault-list-view', 'vault-grid-view');
+    vaultList.classList.add(mode === 'grid' ? 'vault-grid-view' : 'vault-list-view');
+  }
+  if (gridBtn) gridBtn.classList.toggle('active', mode === 'grid');
+  if (listBtn) listBtn.classList.toggle('active', mode === 'list');
+  
+  renderVaultList();
+}
+
+function initPasswordModal() {
+  // Encrypt modal handlers
+  const cancelBtn = DOM.btnCancelPassword();
+  const confirmBtn = DOM.btnConfirmPassword();
+  const toggleBtn = DOM.btnTogglePassword();
+  const generateBtn = DOM.btnGeneratePassword();
+  const copyBtn = DOM.btnCopyPassword();
+  const passwordInput = DOM.encryptPassword();
+  const confirmInput = DOM.confirmPassword();
+  
+  if (cancelBtn) cancelBtn.addEventListener('click', closePasswordModal);
+  if (confirmBtn) confirmBtn.addEventListener('click', confirmPasswordAndEncrypt);
+  if (toggleBtn) toggleBtn.addEventListener('click', () => togglePasswordVisibility('encryptPassword'));
+  if (generateBtn) generateBtn.addEventListener('click', generateStrongPassword);
+  if (copyBtn) copyBtn.addEventListener('click', copyPasswordToClipboard);
+  if (passwordInput) passwordInput.addEventListener('input', updatePasswordStrength);
+  
+  // Decrypt modal handlers
+  const cancelDecrypt = DOM.btnCancelDecrypt();
+  const confirmDecrypt = DOM.btnConfirmDecrypt();
+  const toggleDecrypt = DOM.btnToggleDecryptPassword();
+  const decryptInput = DOM.decryptPassword();
+  
+  if (cancelDecrypt) cancelDecrypt.addEventListener('click', closeDecryptModal);
+  if (confirmDecrypt) confirmDecrypt.addEventListener('click', confirmDecryptPassword);
+  if (toggleDecrypt) toggleDecrypt.addEventListener('click', () => togglePasswordVisibility('decryptPassword'));
+  if (decryptInput) {
+    decryptInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') confirmDecryptPassword();
+    });
+  }
+}
+
+// ============================================================================
+// PASSWORD GENERATION & CLIPBOARD
+// ============================================================================
+
+function generateStrongPassword() {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:,.<>?';
+  const length = 16 + Math.floor(Math.random() * 8); // 16-24 chars
+  let password = '';
+  
+  // Ensure at least one of each type
+  const lower = 'abcdefghijklmnopqrstuvwxyz';
+  const upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const numbers = '0123456789';
+  const symbols = '!@#$%^&*()_+-=[]{}|;:,.<>?';
+  
+  password += lower[Math.floor(Math.random() * lower.length)];
+  password += upper[Math.floor(Math.random() * upper.length)];
+  password += numbers[Math.floor(Math.random() * numbers.length)];
+  password += symbols[Math.floor(Math.random() * symbols.length)];
+  
+  // Fill the rest randomly
+  for (let i = password.length; i < length; i++) {
+    password += chars[Math.floor(Math.random() * chars.length)];
+  }
+  
+  // Shuffle the password
+  password = password.split('').sort(() => Math.random() - 0.5).join('');
+  
+  const passwordInput = DOM.encryptPassword();
+  const confirmInput = DOM.confirmPassword();
+  
+  if (passwordInput) {
+    passwordInput.value = password;
+    passwordInput.type = 'text'; // Show the generated password
+    updatePasswordStrength();
+  }
+  if (confirmInput) {
+    confirmInput.value = password;
+  }
+}
+
+async function copyPasswordToClipboard() {
+  const passwordInput = DOM.encryptPassword();
+  const copyBtn = DOM.btnCopyPassword();
+  const password = passwordInput?.value || '';
+  
+  if (!password) {
+    alert('No password to copy. Enter or generate a password first.');
+    return;
+  }
+  
+  try {
+    await navigator.clipboard.writeText(password);
+    
+    // Visual feedback
+    if (copyBtn) {
+      copyBtn.classList.add('copied');
+      copyBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>';
+      setTimeout(() => {
+        copyBtn.classList.remove('copied');
+        copyBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+      }, 2000);
+    }
+  } catch (e) {
+    alert('Failed to copy password to clipboard');
+  }
+}
+
+function togglePasswordVisibility(inputId) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+function updatePasswordStrength() {
+  const password = DOM.encryptPassword()?.value || '';
+  const strengthFill = DOM.strengthFill();
+  const strengthText = DOM.strengthText();
+  if (!strengthFill || !strengthText) return;
+  
+  let strength = 0;
+  let label = 'Too weak';
+  let color = '#ef4444';
+  
+  if (password.length >= 4) strength += 20;
+  if (password.length >= 8) strength += 20;
+  if (password.length >= 12) strength += 10;
+  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) strength += 15;
+  if (/\d/.test(password)) strength += 15;
+  if (/[^a-zA-Z0-9]/.test(password)) strength += 20;
+  
+  if (strength >= 80) { label = 'Strong'; color = '#10b981'; }
+  else if (strength >= 50) { label = 'Medium'; color = '#f59e0b'; }
+  else if (strength >= 30) { label = 'Weak'; color = '#f97316'; }
+  
+  strengthFill.style.width = `${Math.min(strength, 100)}%`;
+  strengthFill.style.background = color;
+  strengthText.textContent = password ? `Password strength: ${label}` : 'Password strength: Enter a password';
+}
+
+function showPasswordModal(files, mode = 'encrypt') {
+  const modal = DOM.passwordModal();
+  const title = DOM.passwordModalTitle();
+  const subtitle = DOM.passwordModalSubtitle();
+  const confirmGroup = DOM.confirmPasswordGroup();
+  const filesToEncryptEl = DOM.filesToEncrypt();
+  const passwordInput = DOM.encryptPassword();
+  const confirmInput = DOM.confirmPassword();
+  const saveCheckbox = DOM.chkSavePassword();
+  
+  state.passwordModal = { isOpen: true, mode, files, fileId: null, callback: null };
+  
+  if (title) title.textContent = 'Set Encryption Password';
+  if (subtitle) subtitle.textContent = `Encrypting ${files.length} file${files.length > 1 ? 's' : ''} with AES-256-GCM`;
+  if (confirmGroup) confirmGroup.hidden = false;
+  
+  // Show files to be encrypted
+  if (filesToEncryptEl) {
+    const fileNames = files.map(p => {
+      const name = String(p).split(/[/\\]/).pop();
+      return `<div class="file-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>${escapeHtml(name)}</div>`;
+    });
+    filesToEncryptEl.innerHTML = fileNames.join('');
+  }
+  
+  // Pre-fill with session password if available
+  if (state.sessionPassword) {
+    if (passwordInput) passwordInput.value = state.sessionPassword;
+    if (confirmInput) confirmInput.value = state.sessionPassword;
+    if (saveCheckbox) saveCheckbox.checked = true;
+    updatePasswordStrength();
+  } else {
+    // Reset inputs
+    if (passwordInput) passwordInput.value = '';
+    if (confirmInput) confirmInput.value = '';
+    if (saveCheckbox) saveCheckbox.checked = false;
+    updatePasswordStrength();
+  }
+  
+  if (modal) modal.hidden = false;
+  
+  // Focus after a tiny delay to ensure modal is visible
+  setTimeout(() => {
+    if (passwordInput) passwordInput.focus();
+  }, 50);
+}
+
+function closePasswordModal() {
+  const modal = DOM.passwordModal();
+  const passwordInput = DOM.encryptPassword();
+  const confirmInput = DOM.confirmPassword();
+  
+  state.passwordModal = { isOpen: false, mode: 'encrypt', files: [], fileId: null, callback: null };
+  
+  if (passwordInput) passwordInput.value = '';
+  if (confirmInput) confirmInput.value = '';
+  if (modal) modal.hidden = true;
+}
+
+async function confirmPasswordAndEncrypt() {
+  const passwordInput = DOM.encryptPassword();
+  const confirmInput = DOM.confirmPassword();
+  const saveCheckbox = DOM.chkSavePassword();
+  const password = passwordInput?.value || '';
+  const confirm = confirmInput?.value || '';
+  
+  if (password.length < 4) {
+    alert('Password must be at least 4 characters');
+    passwordInput?.focus();
+    return;
+  }
+  if (password !== confirm) {
+    alert('Passwords do not match');
+    confirmInput?.focus();
+    return;
+  }
+  
+  // Save password for session if requested
+  if (saveCheckbox?.checked) {
+    state.sessionPassword = password;
+  }
+  
+  const { mode, files, folderPath } = state.passwordModal;
+  closePasswordModal();
+  
+  // Handle folder encryption
+  if (mode === 'encrypt-folder' && folderPath) {
+    if (!window.electronAPI?.vaultAddFolder) {
+      alert('Vault encryption not available');
+      return;
+    }
+    try {
+      const result = await window.electronAPI.vaultAddFolder(folderPath, password);
+      if (result.success) {
+        refreshVault();
+      } else {
+        alert(`Encryption failed: ${result.error || 'Unknown error'}`);
+      }
+    } catch (e) {
+      alert(`Error: ${e.message || e}`);
+    }
+    return;
+  }
+  
+  // Now add files with password
+  if (!window.electronAPI?.vaultAdd) {
+    alert('Vault encryption not available');
+    return;
+  }
+  
+  try {
+    const result = await window.electronAPI.vaultAdd(files, password);
+    if (result.success) {
+      refreshVault();
+    } else {
+      alert(`Encryption failed: ${result.error || 'Unknown error'}`);
+    }
+  } catch (e) {
+    alert(`Error: ${e.message || e}`);
+  }
+}
+
+function showDecryptModal(fileId, fileName, callback) {
+  // If session password is saved, try it first
+  if (state.sessionPassword) {
+    (async () => {
+      try {
+        const result = await callback(fileId, state.sessionPassword);
+        if (result.success) {
+          return; // Worked with session password
+        }
+        // Session password didn't work, show modal
+        showDecryptModalUI(fileId, fileName, callback);
+      } catch (e) {
+        showDecryptModalUI(fileId, fileName, callback);
+      }
+    })();
+    return;
+  }
+  
+  showDecryptModalUI(fileId, fileName, callback);
+}
+
+function showDecryptModalUI(fileId, fileName, callback) {
+  const modal = DOM.decryptModal();
+  const fileNameEl = DOM.decryptFileName();
+  const passwordInput = DOM.decryptPassword();
+  const errorEl = DOM.decryptError();
+  
+  state.passwordModal = { isOpen: true, mode: 'decrypt', files: [], fileId, callback };
+  
+  if (fileNameEl) fileNameEl.textContent = `Decrypt: ${fileName}`;
+  if (passwordInput) passwordInput.value = '';
+  if (errorEl) errorEl.hidden = true;
+  if (modal) modal.hidden = false;
+  
+  // Focus after a tiny delay to ensure modal is visible
+  setTimeout(() => {
+    if (passwordInput) passwordInput.focus();
+  }, 50);
+}
+
+function closeDecryptModal() {
+  const modal = DOM.decryptModal();
+  const passwordInput = DOM.decryptPassword();
+  
+  state.passwordModal = { isOpen: false, mode: 'encrypt', files: [], fileId: null, callback: null };
+  
+  if (passwordInput) passwordInput.value = '';
+  if (modal) modal.hidden = true;
+}
+
+async function confirmDecryptPassword() {
+  const passwordInput = DOM.decryptPassword();
+  const errorEl = DOM.decryptError();
+  const password = passwordInput?.value || '';
+  
+  if (!password) {
+    if (errorEl) { errorEl.textContent = 'Please enter your password'; errorEl.hidden = false; }
+    return;
+  }
+  
+  const { fileId, callback } = state.passwordModal;
+  
+  if (typeof callback === 'function') {
+    try {
+      const result = await callback(fileId, password);
+      if (result.success) {
+        closeDecryptModal();
+      } else if (result.wrongPassword) {
+        if (errorEl) { errorEl.textContent = 'Incorrect password. Please try again.'; errorEl.hidden = false; }
+        passwordInput?.select();
+      } else {
+        if (errorEl) { errorEl.textContent = result.error || 'Decryption failed'; errorEl.hidden = false; }
+      }
+    } catch (e) {
+      if (errorEl) { errorEl.textContent = e.message || 'Decryption error'; errorEl.hidden = false; }
+    }
+  }
 }
 
 function pickFiles() {
@@ -502,7 +997,7 @@ function pickFiles() {
   if (!window.electronAPI || typeof window.electronAPI.selectFile !== 'function') return;
   window.electronAPI.selectFile().then(filePaths => {
     const paths = Array.isArray(filePaths) ? filePaths : [];
-    if (paths.length) addPathsToVault(paths);
+    if (paths.length) showPasswordModal(paths, 'encrypt');
   });
 }
 
@@ -510,11 +1005,54 @@ function pickFolder() {
   if (!window.electronAPI || typeof window.electronAPI.selectFolder !== 'function') return;
   window.electronAPI.selectFolder().then(folderPaths => {
     const folderPath = Array.isArray(folderPaths) ? folderPaths[0] : null;
-    if (folderPath) addFolderToVault(folderPath);
+    if (folderPath) addFolderToVaultWithPassword(folderPath);
   });
 }
 
-async function addPathsToVault(paths) {
+function addFolderToVaultWithPassword(folderPath) {
+  // For folders, show password modal
+  const modal = DOM.passwordModal();
+  const title = DOM.passwordModalTitle();
+  const subtitle = DOM.passwordModalSubtitle();
+  const confirmGroup = DOM.confirmPasswordGroup();
+  const filesToEncryptEl = DOM.filesToEncrypt();
+  const passwordInput = DOM.encryptPassword();
+  const confirmInput = DOM.confirmPassword();
+  const saveCheckbox = DOM.chkSavePassword();
+  
+  state.passwordModal = { isOpen: true, mode: 'encrypt-folder', files: [], fileId: null, folderPath, callback: null };
+  
+  if (title) title.textContent = 'Set Encryption Password';
+  if (subtitle) subtitle.textContent = `Encrypting all files in folder`;
+  if (confirmGroup) confirmGroup.hidden = false;
+  
+  if (filesToEncryptEl) {
+    const name = String(folderPath).split(/[/\\]/).pop();
+    filesToEncryptEl.innerHTML = `<div class="file-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>📁 ${escapeHtml(name)}</div>`;
+  }
+  
+  // Pre-fill with session password if available
+  if (state.sessionPassword) {
+    if (passwordInput) passwordInput.value = state.sessionPassword;
+    if (confirmInput) confirmInput.value = state.sessionPassword;
+    if (saveCheckbox) saveCheckbox.checked = true;
+    updatePasswordStrength();
+  } else {
+    if (passwordInput) passwordInput.value = '';
+    if (confirmInput) confirmInput.value = '';
+    if (saveCheckbox) saveCheckbox.checked = false;
+    updatePasswordStrength();
+  }
+  
+  if (modal) modal.hidden = false;
+  
+  // Focus after a tiny delay
+  setTimeout(() => {
+    if (passwordInput) passwordInput.focus();
+  }, 50);
+}
+
+async function addPathsToVault(paths, password) {
   if (!window.electronAPI || typeof window.electronAPI.vaultAdd !== 'function') {
     // Fallback: keep renderer-only list (best-effort)
     (paths || []).forEach((p) => {
@@ -533,16 +1071,16 @@ async function addPathsToVault(paths) {
   }
 
   try {
-    await window.electronAPI.vaultAdd(paths);
+    await window.electronAPI.vaultAdd(paths, password);
   } finally {
     refreshVault();
   }
 }
 
-async function addFolderToVault(folderPath) {
+async function addFolderToVault(folderPath, password) {
   if (!window.electronAPI || typeof window.electronAPI.vaultAddFolder !== 'function') return;
   try {
-    await window.electronAPI.vaultAddFolder(folderPath);
+    await window.electronAPI.vaultAddFolder(folderPath, password);
   } finally {
     refreshVault();
   }
@@ -550,79 +1088,173 @@ async function addFolderToVault(folderPath) {
 
 function renderVaultList() {
   const vaultList = DOM.vaultList();
+  const vaultEmpty = DOM.vaultEmpty();
 
   if (!vaultList) return;
   
+  // Update view mode class
+  vaultList.classList.remove('vault-list-view', 'vault-grid-view');
+  vaultList.classList.add(state.vaultViewMode === 'grid' ? 'vault-grid-view' : 'vault-list-view');
+  
+  // Clean up any stale selections
+  state.vaultSelectedFiles = state.vaultSelectedFiles.filter(id => 
+    state.vaultFiles.some(f => String(f.id) === id)
+  );
+  
   if (state.vaultFiles.length === 0) {
-    vaultList.innerHTML = `
-      <div class="empty-state">
-        <svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M24 4v20M4 24h20m0 0h20M24 44v-20m0 0v-20" />
-        </svg>
-        <div class="empty-title">No files yet</div>
-        <div class="empty-description">Drop files here, or use the buttons above to add files and folders to your encrypted vault. Files are automatically encrypted with AES-256-GCM.</div>
-      </div>
-    `;
+    vaultList.innerHTML = '';
+    if (vaultEmpty) vaultEmpty.hidden = false;
+    updateVaultSelection();
     return;
   }
+  
+  if (vaultEmpty) vaultEmpty.hidden = true;
 
   vaultList.innerHTML = state.vaultFiles.map(file => {
-    const addedAt = file.addedAt ? new Date(file.addedAt).toLocaleString() : '';
-    const metaBits = [];
+    const addedAt = file.addedAt ? new Date(file.addedAt).toLocaleDateString() : '';
     const displaySize = file.originalSize || file.size;
-    if (typeof displaySize === 'number') metaBits.push(fmtBytes(displaySize));
-    if (file.encrypted) metaBits.push('🔒 Encrypted');
-    if (addedAt) metaBits.push(`Added: ${addedAt}`);
+    const sizeStr = typeof displaySize === 'number' ? fmtBytes(displaySize) : '';
+    const isEncrypted = file.encrypted;
+    const fileId = String(file.id);
+    const isSelected = state.vaultSelectedFiles.includes(fileId);
+    
+    // Get file extension for icon
+    const ext = (file.name || '').split('.').pop()?.toLowerCase() || '';
+    const fileIcon = getFileIcon(ext);
+    
+    if (state.vaultViewMode === 'grid') {
+      return `
+      <div class="vault-item${isSelected ? ' selected' : ''}" data-id="${escapeHtml(fileId)}">
+        <div class="vault-item-checkbox">
+          <input type="checkbox" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation(); window.toggleVaultSelection('${fileId}')" />
+        </div>
+        <div class="vault-item-icon">${fileIcon}</div>
+        <div class="vault-item-info">
+          <div class="name">${escapeHtml(file.name || '')}</div>
+          <div class="meta">${sizeStr}${isEncrypted ? ' • 🔒' : ''}</div>
+        </div>
+      </div>
+    `;
+    }
+    
     return `
-    <div class="vault-item">
+    <div class="vault-item${isSelected ? ' selected' : ''}" data-id="${escapeHtml(fileId)}">
+      <div class="vault-item-checkbox">
+        <input type="checkbox" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation(); window.toggleVaultSelection('${fileId}')" />
+      </div>
+      <div class="vault-item-icon">${fileIcon}</div>
       <div class="vault-item-info">
-        <div class="name">${file.encrypted ? '🔐' : '📄'} ${escapeHtml(file.name || '')}</div>
-        <div class="meta">${escapeHtml(metaBits.join(' • '))}</div>
+        <div class="name">
+          ${escapeHtml(file.name || '')}
+          ${isEncrypted ? '<span class="lock-badge"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>Encrypted</span>' : ''}
+        </div>
+        <div class="meta">
+          <span>${sizeStr}</span>
+          ${addedAt ? `<span>${addedAt}</span>` : ''}
+          ${isEncrypted ? '<span style="color: #10b981;">AES-256-GCM</span>' : ''}
+        </div>
       </div>
       <div class="vault-item-buttons">
-        <button class="btn btn-primary" onclick="window.openVaultItem('${String(file.id)}')" title="Open/Preview">Open</button>
-        <button class="btn btn-secondary" onclick="window.exportVaultItem('${String(file.id)}')" title="Export decrypted copy">Export</button>
-        <button class="btn btn-danger" onclick="window.removeVaultItem('${String(file.id)}')" title="Remove from vault">Remove</button>
+        <button class="btn btn-primary" onclick="window.openVaultItem('${fileId}', '${escapeHtml(file.name || '')}')" title="Open/Preview">Open</button>
+        <button class="btn btn-secondary" onclick="window.exportVaultItem('${fileId}', '${escapeHtml(file.name || '')}')" title="Export decrypted copy">Export</button>
+        <button class="btn btn-danger" onclick="window.removeVaultItem('${fileId}')" title="Remove from vault">Remove</button>
       </div>
     </div>
   `;
   }).join('');
+  
+  // Add click handlers for items (row click toggles selection, double-click opens)
+  vaultList.querySelectorAll('.vault-item').forEach(el => {
+    el.addEventListener('click', (e) => {
+      // Don't toggle if clicking on buttons or checkbox
+      if (e.target.closest('.vault-item-buttons') || e.target.closest('.vault-item-checkbox')) return;
+      const id = el.dataset.id;
+      window.toggleVaultSelection(id);
+    });
+    
+    el.addEventListener('dblclick', (e) => {
+      // Don't open if clicking on buttons or checkbox
+      if (e.target.closest('.vault-item-buttons') || e.target.closest('.vault-item-checkbox')) return;
+      const id = el.dataset.id;
+      const file = state.vaultFiles.find(f => String(f.id) === id);
+      if (file) window.openVaultItem(id, file.name);
+    });
+  });
+  
+  updateVaultSelection();
+}
+
+// Global function for checkbox click
+window.toggleVaultSelection = (fileId) => {
+  toggleVaultFileSelection(fileId);
+};
+
+function getFileIcon(ext) {
+  const iconMap = {
+    pdf: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>',
+    doc: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>',
+    docx: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>',
+    xls: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>',
+    xlsx: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>',
+    jpg: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>',
+    jpeg: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>',
+    png: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>',
+    gif: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>',
+    mp3: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>',
+    mp4: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line><line x1="2" y1="7" x2="7" y2="7"></line><line x1="2" y1="17" x2="7" y2="17"></line><line x1="17" y1="17" x2="22" y2="17"></line><line x1="17" y1="7" x2="22" y2="7"></line></svg>',
+    zip: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><line x1="12" y1="11" x2="12" y2="17"></line><line x1="9" y1="14" x2="15" y2="14"></line></svg>',
+  };
+  return iconMap[ext] || '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>';
 }
 
 // Open/preview a vault file
-window.openVaultItem = async (fileId) => {
+window.openVaultItem = async (fileId, fileName) => {
   const id = String(fileId || '');
   if (!id) return;
   if (!window.electronAPI || typeof window.electronAPI.vaultOpen !== 'function') {
     alert('Open feature not available');
     return;
   }
-  try {
-    const res = await window.electronAPI.vaultOpen(id);
-    if (!res.success) {
-      alert(`Failed to open: ${res.error || 'Unknown error'}`);
-    }
-  } catch (e) {
-    alert(`Error: ${e.message || e}`);
+  
+  // First, try without password to check if file needs password
+  const checkResult = await window.electronAPI.vaultOpen(id, null);
+  
+  if (checkResult.needPassword) {
+    // Show decrypt modal
+    showDecryptModal(id, fileName || 'file', async (fId, password) => {
+      return await window.electronAPI.vaultOpen(fId, password);
+    });
+    return;
+  }
+  
+  if (!checkResult.success) {
+    alert(`Failed to open: ${checkResult.error || 'Unknown error'}`);
   }
 };
 
 // Export a single vault file
-window.exportVaultItem = async (fileId) => {
+window.exportVaultItem = async (fileId, fileName) => {
   const id = String(fileId || '');
   if (!id) return;
   if (!window.electronAPI || typeof window.electronAPI.vaultExportFile !== 'function') {
     alert('Export feature not available');
     return;
   }
-  try {
-    const res = await window.electronAPI.vaultExportFile(id);
-    if (res.canceled) return;
-    if (!res.success) {
-      alert(`Failed to export: ${res.error || 'Unknown error'}`);
-    }
-  } catch (e) {
-    alert(`Error: ${e.message || e}`);
+  
+  // First, try without password to check if file needs password
+  const checkResult = await window.electronAPI.vaultExportFile(id, null);
+  
+  if (checkResult.needPassword) {
+    // Show decrypt modal
+    showDecryptModal(id, fileName || 'file', async (fId, password) => {
+      return await window.electronAPI.vaultExportFile(fId, password);
+    });
+    return;
+  }
+  
+  if (checkResult.canceled) return;
+  if (!checkResult.success) {
+    alert(`Failed to export: ${checkResult.error || 'Unknown error'}`);
   }
 };
 
@@ -643,6 +1275,59 @@ function togglePasswordField() {
   const protect = DOM.vaultUploadProtect();
   if (!pw || !protect) return;
   pw.hidden = !protect.checked;
+}
+
+// Upload encrypted vault files to FileShot.io
+async function uploadVaultToFileShot() {
+  if (state.vaultFiles.length === 0) {
+    alert('Your vault is empty. Add files first.');
+    return;
+  }
+  
+  const count = state.vaultFiles.length;
+  if (!confirm(`Upload ${count} encrypted file${count > 1 ? 's' : ''} to FileShot.io?\n\nThe files will remain encrypted with your password. They can only be decrypted with your original password.`)) {
+    return;
+  }
+  
+  // Check if uploadZke API is available
+  if (!window.electronAPI?.uploadZke) {
+    alert('Upload feature not available. Please use the Online mode to upload files.');
+    return;
+  }
+  
+  let uploaded = 0;
+  let failed = 0;
+  
+  for (const file of state.vaultFiles) {
+    try {
+      const result = await window.electronAPI.uploadZke(file.id, { keepEncrypted: true }, (progress) => {
+        console.log(`Upload progress for ${file.name}:`, progress);
+      });
+      
+      if (result.success) {
+        uploaded++;
+        // Store the share URL on the vault item
+        file.lastUpload = {
+          shareUrl: result.shareUrl,
+          uploadedAt: Date.now()
+        };
+      } else {
+        failed++;
+        console.warn(`Failed to upload ${file.name}:`, result.error);
+      }
+    } catch (e) {
+      failed++;
+      console.error(`Error uploading ${file.name}:`, e);
+    }
+  }
+  
+  if (failed > 0) {
+    alert(`Upload complete.\n✓ ${uploaded} file${uploaded !== 1 ? 's' : ''} uploaded\n✗ ${failed} file${failed !== 1 ? 's' : ''} failed`);
+  } else {
+    alert(`Successfully uploaded ${uploaded} encrypted file${uploaded !== 1 ? 's' : ''} to FileShot.io!\n\nYou can share the files from the Online section.`);
+  }
+  
+  refreshVault();
 }
 
 async function uploadVault() {
