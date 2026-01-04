@@ -56,6 +56,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // App controls
   goOnline: () => ipcRenderer.invoke('go-online'),
   copyToClipboard: (text) => ipcRenderer.invoke('copy-to-clipboard', String(text || '')),
+  openExternal: (url) => ipcRenderer.invoke('open-external', String(url || '')),
+
+  // Initiate an OS drag operation for one or more file paths.
+  // Useful for dragging from the sidebar Explorer into the embedded webview or other apps.
+  startDrag: (paths) => ipcRenderer.send('start-drag', Array.isArray(paths) ? paths : [paths]),
 
   // Secure shred (local destructive operation)
   shredStart: (payload, progressCb) => {
@@ -73,7 +78,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // Navigation
   onNavigateTo: (callback) => {
-    ipcRenderer.on('navigate-to', (event, route) => callback(route));
+    ipcRenderer.on('navigate-to', (_event, route) => {
+      try { callback(route); } catch (_) {}
+    });
   },
   
   // Upload events

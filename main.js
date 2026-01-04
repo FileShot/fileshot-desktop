@@ -349,7 +349,8 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
-      webSecurity: true
+      webSecurity: true,
+      webviewTag: true
     },
     show: false, // Don't show until ready
     backgroundColor: '#1a1a1a',
@@ -404,6 +405,60 @@ function createWindow() {
     loadFrontend({ preferredPath: '/', reason: `did-fail-load:${errorCode}` }).catch(() => {});
   });
 }
+
+// ============================================================================
+// DRAG-OUT FROM LOCAL EXPLORER (OS DRAG)
+// ============================================================================
+
+ipcMain.on('start-drag', async (event, paths) => {
+  const list = Array.isArray(paths) ? paths.map(String).filter(Boolean) : [];
+  if (!list.length) return;
+
+  const wc = event.sender;
+  if (!wc || typeof wc.startDrag !== 'function') return;
+
+  // If folders are included, expand them into file paths so web uploads can accept the drop.
+  // NOTE: Many sites don't accept directory drops, but do accept multiple files.
+  let dragFiles = [];
+  for (const p of list) {
+    const st = safeStat(p);
+    if (!st) continue;
+    if (st.isFile()) {
+      dragFiles.push(p);
+    } else if (st.isDirectory()) {
+      try {
+        const files = getAllFilesInFolder(p);
+        dragFiles.push(...files);
+      } catch (_) {}
+    }
+  }
+
+  // Prevent pathological huge drags from freezing the app.
+  if (dragFiles.length > 2000) {
+    dragFiles = dragFiles.slice(0, 2000);
+  }
+
+  if (!dragFiles.length) {
+    // Fall back to dragging the first original path if expansion produced nothing.
+    dragFiles = [list[0]];
+  }
+
+  const iconPath = path.join(__dirname, 'assets', 'icon.png');
+  const icon = nativeImage.createFromPath(iconPath);
+
+  try {
+    // Electron supports `files` in newer versions; fall back to single file.
+    try {
+      if (dragFiles.length > 1) {
+        wc.startDrag({ files: dragFiles, icon });
+      } else {
+        wc.startDrag({ file: dragFiles[0], icon });
+      }
+    } catch (_) {
+      wc.startDrag({ file: dragFiles[0], icon });
+    }
+  }
+});
 
 /**
  * Create system tray icon
@@ -907,10 +962,35 @@ ipcMain.handle('shred-start', async (event, payload) => {
 
 ipcMain.handle('go-online', async () => {
   if (!mainWindow) return { success: false };
-  await loadFrontendFallback({ preferredPath: '/', reason: 'renderer:go-online' });
+
+  // Always keep the local UI shell so the sidebar remains available.
+  // The renderer will embed the live site in a <webview> panel.
+  const url = String(mainWindow.webContents.getURL() || '');
+  const inLocalShell = url.startsWith('file:') && url.includes('renderer/local/index.html');
+  if (!inLocalShell) {
+    try {
+      await mainWindow.loadFile(LOCAL_UI_INDEX);
+    } catch (_) {}
+  }
+
+  try {
+    mainWindow.webContents.send('navigate-to', { tool: 'online', url: FRONTEND_URL });
+  } catch (_) {}
+
   mainWindow.show();
   mainWindow.focus();
   return { success: true };
+});
+
+ipcMain.handle('open-external', async (_event, url) => {
+  const u = String(url || '').trim();
+  if (!u) return { success: false };
+  try {
+    await shell.openExternal(u);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e && e.message ? e.message : String(e) };
+  }
 });
 
 ipcMain.handle('vault-list', async () => {

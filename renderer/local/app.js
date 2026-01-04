@@ -30,7 +30,11 @@ const state = {
   shredCustomPaths: [],
   explorer: {
     currentPath: null,
-    mode: 'drives' // 'drives' | 'dir'
+    mode: 'drives', // 'drives' | 'dir'
+    view: 'list', // 'list' | 'grid'
+    entries: [],
+    selectedPaths: [],
+    lastSelectedIndex: null
   },
   settings: {
     autoLock: false,
@@ -48,8 +52,13 @@ const DOM = {
   // Sidebar
   sidebar: () => document.getElementById('sidebar'),
   btnCollapse: () => document.getElementById('btnCollapse'),
-  navItems: () => document.querySelectorAll('.nav-item'),
+  navItems: () => document.querySelectorAll('.nav-item[data-tool]'),
   goOnlineBtn: () => document.getElementById('btnGoOnline'),
+
+  // Tools menu
+  toolsToggleBtn: () => document.getElementById('btnToolsToggle'),
+  toolsSubmenu: () => document.getElementById('toolsSubmenu'),
+  toolsSubitems: () => document.querySelectorAll('#toolsSubmenu .nav-subitem'),
   
   // Main content
   topbarLeft: () => document.querySelector('.topbar-left'),
@@ -93,8 +102,17 @@ const DOM = {
   // Sidebar explorer
   explorerPath: () => document.getElementById('explorerPath'),
   explorerList: () => document.getElementById('explorerList'),
+  explorerViewBtn: () => document.getElementById('btnExplorerView'),
   explorerUpBtn: () => document.getElementById('btnExplorerUp'),
   explorerRefreshBtn: () => document.getElementById('btnExplorerRefresh'),
+
+  // Online tool
+  onlineWebview: () => document.getElementById('onlineWebview'),
+  onlineUrl: () => document.getElementById('onlineUrl'),
+  onlineBackBtn: () => document.getElementById('btnOnlineBack'),
+  onlineForwardBtn: () => document.getElementById('btnOnlineForward'),
+  onlineReloadBtn: () => document.getElementById('btnOnlineReload'),
+  onlineOpenExternalBtn: () => document.getElementById('btnOnlineOpenExternal'),
   
   settingsAutoLock: () => document.getElementById('autoLock'),
   settingsPin: () => document.getElementById('requirePin'),
@@ -122,6 +140,7 @@ window.addEventListener('DOMContentLoaded', () => {
   initGoOnline();
   initDropZone();
   initToolPanels();
+  initOnlineTool();
   initVaultTool();
   initStorageTool();
   initShredTool();
@@ -174,12 +193,35 @@ function initSidebar() {
   const collapseBtn = DOM.btnCollapse();
   if (collapseBtn) collapseBtn.addEventListener('click', toggleSidebar);
 
-  // Hide unfinished tools to avoid placeholders
-  ['pdf', 'image', 'text'].forEach(tool => {
-    const nav = document.querySelector(`.nav-item[data-tool="${tool}"]`);
-    const panel = DOM.toolPanel(tool);
-    if (nav) nav.style.display = 'none';
-    if (panel) panel.hidden = true;
+  // Tools dropdown
+  const toolsToggle = DOM.toolsToggleBtn();
+  const toolsSubmenu = DOM.toolsSubmenu();
+  const setToolsOpen = (open) => {
+    if (!toolsSubmenu || !toolsToggle) return;
+    toolsSubmenu.hidden = !open;
+    toolsToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  if (toolsToggle && toolsSubmenu) {
+    toolsToggle.addEventListener('click', (e) => {
+      e.preventDefault();
+      const open = toolsSubmenu.hidden;
+      setToolsOpen(open);
+    });
+    document.addEventListener('click', (e) => {
+      const menu = document.getElementById('toolsMenu');
+      if (!menu) return;
+      if (!menu.contains(e.target)) setToolsOpen(false);
+    });
+  }
+
+  DOM.toolsSubitems().forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const url = e.currentTarget?.dataset?.onlineUrl;
+      if (url) {
+        setToolsOpen(false);
+        openOnline(url);
+      }
+    });
   });
   
   DOM.navItems().forEach(item => {
@@ -192,15 +234,10 @@ function initSidebar() {
 
 function initGoOnline() {
   const btn = DOM.goOnlineBtn();
-  if (!btn || !window.electronAPI || typeof window.electronAPI.goOnline !== 'function') return;
+  if (!btn) return;
 
-  btn.addEventListener('click', async () => {
-    btn.disabled = true;
-    try {
-      await window.electronAPI.goOnline();
-    } finally {
-      btn.disabled = false;
-    }
+  btn.addEventListener('click', () => {
+    openOnline('https://fileshot.io');
   });
 }
 
@@ -213,6 +250,9 @@ function toggleSidebar() {
 function switchToTool(toolName) {
   // Update state
   state.currentTool = toolName;
+
+  // Global drop handling should never block the embedded site.
+  setGlobalDropHandlingEnabled(toolName !== 'online');
   
   // Update nav items
   DOM.navItems().forEach(item => {
@@ -233,6 +273,7 @@ function switchToTool(toolName) {
   // Update topbar title with icons
   const titles = {
     vault: '<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Local Vault',
+    online: '<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/><path d="M3.6 9h16.8"/><path d="M3.6 15h16.8"/></svg> Online',
     pdf: '<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> PDF Tools',
     image: '<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg> Image Tools',
     text: '<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg> Text Tools',
@@ -243,6 +284,18 @@ function switchToTool(toolName) {
   
   const topbar = DOM.topbarLeft();
   if (topbar) topbar.innerHTML = `<h1>${titles[toolName]}</h1>`;
+
+  if (toolName === 'online') {
+    const wv = DOM.onlineWebview();
+    try {
+      const current = wv ? String(wv.getURL() || '') : '';
+      if (!current || current === 'about:blank') {
+        openOnline('https://fileshot.io');
+      }
+    } catch (_) {
+      openOnline('https://fileshot.io');
+    }
+  }
 }
 
 // ============================================================================
@@ -250,6 +303,38 @@ function switchToTool(toolName) {
 // ============================================================================
 
 let dragCounter = 0;
+
+const dropHandlers = {
+  enabled: true,
+  onDragEnter: null,
+  onDragLeave: null,
+  onDragOver: null,
+  onDrop: null
+};
+
+function setGlobalDropHandlingEnabled(enabled) {
+  const want = Boolean(enabled);
+  if (dropHandlers.enabled === want) return;
+
+  dropHandlers.enabled = want;
+  const dz = DOM.dropZone();
+  if (dz) dz.hidden = true;
+  dragCounter = 0;
+
+  if (!dropHandlers.onDragEnter) return; // not initialized yet
+
+  if (want) {
+    document.addEventListener('dragenter', dropHandlers.onDragEnter);
+    document.addEventListener('dragleave', dropHandlers.onDragLeave);
+    document.addEventListener('dragover', dropHandlers.onDragOver);
+    document.addEventListener('drop', dropHandlers.onDrop);
+  } else {
+    document.removeEventListener('dragenter', dropHandlers.onDragEnter);
+    document.removeEventListener('dragleave', dropHandlers.onDragLeave);
+    document.removeEventListener('dragover', dropHandlers.onDragOver);
+    document.removeEventListener('drop', dropHandlers.onDrop);
+  }
+}
 
 function initDropZone() {
   const dropZone = DOM.dropZone();
@@ -261,29 +346,34 @@ function initDropZone() {
   dragCounter = 0;
   
   // Listen on document level for drag events
-  document.addEventListener('dragenter', (e) => {
+  dropHandlers.onDragEnter = (e) => {
     e.preventDefault();
     dragCounter++;
     if (dragCounter === 1) {
       dropZone.hidden = false;
     }
-  });
+  };
   
-  document.addEventListener('dragleave', (e) => {
+  dropHandlers.onDragLeave = (e) => {
     e.preventDefault();
     dragCounter--;
     if (dragCounter === 0) {
       dropZone.hidden = true;
     }
-  });
+  };
   
-  document.addEventListener('dragover', (e) => {
+  dropHandlers.onDragOver = (e) => {
     e.preventDefault();
     e.stopPropagation();
-  });
+  };
   
   // Handle file drop
-  document.addEventListener('drop', handleFileDrop);
+  dropHandlers.onDrop = handleFileDrop;
+
+  document.addEventListener('dragenter', dropHandlers.onDragEnter);
+  document.addEventListener('dragleave', dropHandlers.onDragLeave);
+  document.addEventListener('dragover', dropHandlers.onDragOver);
+  document.addEventListener('drop', dropHandlers.onDrop);
 }
 
 function handleFileDrop(e) {
@@ -309,16 +399,37 @@ function handleFileDrop(e) {
   }
 
   // 2) In-app drag from sidebar explorer
+  const itemsJson = e.dataTransfer?.getData('application/x-fileshot-items');
+  if (itemsJson) {
+    let items;
+    try { items = JSON.parse(itemsJson); } catch (_) { items = null; }
+    const list = Array.isArray(items) ? items : [];
+    const filesOnly = [];
+    const dirsOnly = [];
+    for (const it of list) {
+      const p = String(it?.path || '').trim();
+      if (!p) continue;
+      const k = String(it?.kind || 'file');
+      if (k === 'dir') dirsOnly.push(p);
+      else filesOnly.push(p);
+    }
+
+    if (filesOnly.length || dirsOnly.length) {
+      switchToTool('vault');
+      if (filesOnly.length) addPathsToVault(filesOnly);
+      // Directories are expanded in main process; do them after
+      dirsOnly.forEach((d) => addFolderToVault(d));
+    }
+    return;
+  }
+
   const kind = e.dataTransfer?.getData('application/x-fileshot-kind');
   const p = e.dataTransfer?.getData('application/x-fileshot-path') || e.dataTransfer?.getData('text/plain');
   if (!p) return;
 
   switchToTool('vault');
-  if (kind === 'dir') {
-    addFolderToVault(p);
-  } else {
-    addPathsToVault([p]);
-  }
+  if (kind === 'dir') addFolderToVault(p);
+  else addPathsToVault([p]);
 }
 
 // ============================================================================
@@ -744,11 +855,18 @@ function initExplorer() {
   const list = DOM.explorerList();
   const upBtn = DOM.explorerUpBtn();
   const refreshBtn = DOM.explorerRefreshBtn();
+  const viewBtn = DOM.explorerViewBtn();
 
   if (!list) return;
 
   if (upBtn) upBtn.addEventListener('click', () => explorerUp());
   if (refreshBtn) refreshBtn.addEventListener('click', () => explorerRefresh());
+  if (viewBtn) {
+    viewBtn.addEventListener('click', () => {
+      state.explorer.view = state.explorer.view === 'grid' ? 'list' : 'grid';
+      renderExplorerSelection();
+    });
+  }
 
   explorerShowDrives();
 }
@@ -761,6 +879,9 @@ function setExplorerPathLabel(text) {
 async function explorerShowDrives() {
   state.explorer.mode = 'drives';
   state.explorer.currentPath = null;
+  state.explorer.entries = [];
+  state.explorer.selectedPaths = [];
+  state.explorer.lastSelectedIndex = null;
   setExplorerPathLabel('This PC');
 
   const list = DOM.explorerList();
@@ -773,10 +894,15 @@ async function explorerShowDrives() {
 
   const drives = await window.electronAPI.fsListDrives();
   const items = Array.isArray(drives) ? drives : [];
-  list.innerHTML = items.map((d) => {
+  state.explorer.entries = items.map((d) => {
     const p = String(d.path || d.name || '');
+    return { kind: 'dir', path: p, name: d.name || p, meta: '🖴' };
+  });
+
+  list.innerHTML = state.explorer.entries.map((d, idx) => {
+    const p = String(d.path || '');
     return `
-      <div class="explorer-item" draggable="false" data-kind="dir" data-path="${escapeHtml(p)}">
+      <div class="explorer-item" draggable="true" data-index="${idx}" data-kind="dir" data-path="${escapeHtml(p)}">
         <div class="meta">🖴</div>
         <div class="name" title="${escapeHtml(p)}">${escapeHtml(d.name || p)}</div>
         <button class="add" type="button" data-action="open">Open</button>
@@ -784,15 +910,7 @@ async function explorerShowDrives() {
     `;
   }).join('') || '<div class="explorer-item"><div></div><div class="name">No drives found</div><div></div></div>';
 
-  list.querySelectorAll('.explorer-item').forEach((row) => {
-    row.addEventListener('dblclick', () => explorerOpen(row.dataset.path));
-  });
-  list.querySelectorAll('button[data-action="open"]').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      const row = e.currentTarget.closest('.explorer-item');
-      explorerOpen(row?.dataset?.path);
-    });
-  });
+  wireExplorerEvents();
 }
 
 function explorerParentPath(p) {
@@ -825,6 +943,9 @@ async function explorerOpen(dirPath) {
 
   state.explorer.mode = 'dir';
   state.explorer.currentPath = p;
+  state.explorer.entries = [];
+  state.explorer.selectedPaths = [];
+  state.explorer.lastSelectedIndex = null;
   setExplorerPathLabel(p);
 
   const list = DOM.explorerList();
@@ -839,14 +960,22 @@ async function explorerOpen(dirPath) {
     return;
   }
 
-  list.innerHTML = entries.map((ent) => {
+  state.explorer.entries = entries.map((ent) => {
     const kind = ent.isDir ? 'dir' : 'file';
     const icon = ent.isDir ? '📁' : '📄';
     const name = ent.name || ent.path;
     const p2 = String(ent.path || '');
-    const btn = ent.isDir ? '<button class="add" type="button" data-action="open">Open</button>' : '<button class="add" type="button" data-action="add">Add</button>';
+    return { kind, icon, name, path: p2 };
+  });
+
+  list.innerHTML = state.explorer.entries.map((ent, idx) => {
+    const kind = ent.kind;
+    const icon = ent.icon;
+    const name = ent.name;
+    const p2 = String(ent.path || '');
+    const btn = kind === 'dir' ? '<button class="add" type="button" data-action="open">Open</button>' : '<button class="add" type="button" data-action="add">Add</button>';
     return `
-      <div class="explorer-item" draggable="true" data-kind="${kind}" data-path="${escapeHtml(p2)}" title="${escapeHtml(p2)}">
+      <div class="explorer-item" draggable="true" data-index="${idx}" data-kind="${kind}" data-path="${escapeHtml(p2)}" title="${escapeHtml(p2)}">
         <div class="meta">${icon}</div>
         <div class="name">${escapeHtml(name)}</div>
         ${btn}
@@ -854,35 +983,204 @@ async function explorerOpen(dirPath) {
     `;
   }).join('') || '<div class="explorer-item"><div></div><div class="name">(Empty)</div><div></div></div>';
 
+  wireExplorerEvents();
+}
+
+function renderExplorerSelection() {
+  const list = DOM.explorerList();
+  if (!list) return;
+  list.classList.toggle('grid', state.explorer.view === 'grid');
+  const sel = new Set(state.explorer.selectedPaths.map(String));
   list.querySelectorAll('.explorer-item').forEach((row) => {
-    row.addEventListener('dragstart', (e) => {
-      const p2 = row.dataset.path;
-      const kind = row.dataset.kind;
-      if (!p2) return;
-      e.dataTransfer?.setData('application/x-fileshot-path', p2);
-      e.dataTransfer?.setData('application/x-fileshot-kind', kind || 'file');
-      e.dataTransfer?.setData('text/plain', p2);
-      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copy';
+    const p = String(row.dataset.path || '');
+    row.classList.toggle('selected', sel.has(p));
+  });
+}
+
+function setExplorerSelection(paths, lastIndex = null) {
+  state.explorer.selectedPaths = Array.from(new Set((paths || []).map(String).filter(Boolean)));
+  state.explorer.lastSelectedIndex = lastIndex;
+  renderExplorerSelection();
+}
+
+function wireExplorerEvents() {
+  const list = DOM.explorerList();
+  if (!list) return;
+
+  renderExplorerSelection();
+
+  list.querySelectorAll('.explorer-item').forEach((row) => {
+    row.addEventListener('click', (e) => {
+      // Buttons handle their own clicks; keep row selection logic clean.
+      if (e.target && e.target.closest('button')) return;
+      const p = String(row.dataset.path || '').trim();
+      if (!p) return;
+
+      const idx = Number(row.dataset.index);
+      const hasCtrl = e.ctrlKey || e.metaKey;
+      const hasShift = e.shiftKey;
+      const selected = new Set(state.explorer.selectedPaths.map(String));
+
+      if (hasShift && Number.isFinite(state.explorer.lastSelectedIndex) && Number.isFinite(idx)) {
+        const start = Math.min(state.explorer.lastSelectedIndex, idx);
+        const end = Math.max(state.explorer.lastSelectedIndex, idx);
+        const paths = [];
+        for (let i = start; i <= end; i++) {
+          const r = list.querySelector(`.explorer-item[data-index="${i}"]`);
+          const rp = String(r?.dataset?.path || '').trim();
+          if (rp) paths.push(rp);
+        }
+        // Shift-select replaces selection unless Ctrl is held
+        if (!hasCtrl) {
+          setExplorerSelection(paths, idx);
+        } else {
+          paths.forEach((p2) => selected.add(p2));
+          setExplorerSelection(Array.from(selected), idx);
+        }
+        return;
+      }
+
+      if (hasCtrl) {
+        if (selected.has(p)) selected.delete(p);
+        else selected.add(p);
+        setExplorerSelection(Array.from(selected), Number.isFinite(idx) ? idx : null);
+        return;
+      }
+
+      setExplorerSelection([p], Number.isFinite(idx) ? idx : null);
     });
+
     row.addEventListener('dblclick', () => {
       if (row.dataset.kind === 'dir') explorerOpen(row.dataset.path);
       else addPathsToVault([row.dataset.path]);
+    });
+
+    row.addEventListener('dragstart', (e) => {
+      const p = String(row.dataset.path || '').trim();
+      if (!p) return;
+      const kind = String(row.dataset.kind || 'file');
+
+      // If dragging an unselected item, select it (common OS behavior)
+      const selected = new Set(state.explorer.selectedPaths.map(String));
+      if (!selected.has(p)) {
+        const idx = Number(row.dataset.index);
+        setExplorerSelection([p], Number.isFinite(idx) ? idx : null);
+        selected.clear();
+        selected.add(p);
+      }
+
+      const allRows = Array.from(list.querySelectorAll('.explorer-item'));
+      const items = Array.from(selected).map((sp) => {
+        const r = allRows.find(r0 => String(r0?.dataset?.path || '') === sp);
+        return { path: sp, kind: String(r?.dataset?.kind || 'file') };
+      });
+
+      if (e.dataTransfer) {
+        e.dataTransfer.setData('application/x-fileshot-items', JSON.stringify(items));
+        // Back-compat single-path fields
+        e.dataTransfer.setData('application/x-fileshot-path', p);
+        e.dataTransfer.setData('application/x-fileshot-kind', kind);
+        e.dataTransfer.setData('text/plain', items.map(it => it.path).join('\n'));
+        e.dataTransfer.effectAllowed = 'copy';
+      }
+
+      // Enable drag from Explorer into the embedded website and the OS.
+      try {
+        const paths = items.map(it => it.path);
+        window.electronAPI?.startDrag?.(paths);
+      } catch (_) {}
     });
   });
 
   list.querySelectorAll('button[data-action="open"]').forEach((btn) => {
     btn.addEventListener('click', (e) => {
+      e.stopPropagation();
       const row = e.currentTarget.closest('.explorer-item');
       explorerOpen(row?.dataset?.path);
     });
   });
+
   list.querySelectorAll('button[data-action="add"]').forEach((btn) => {
     btn.addEventListener('click', (e) => {
+      e.stopPropagation();
       const row = e.currentTarget.closest('.explorer-item');
       const p2 = row?.dataset?.path;
       if (p2) addPathsToVault([p2]);
     });
   });
+}
+
+// ============================================================================
+// ONLINE TOOL (EMBED LIVE SITE)
+// ============================================================================
+
+function initOnlineTool() {
+  const wv = DOM.onlineWebview();
+  if (!wv) return;
+
+  const setUrlLabel = (u) => {
+    const el = DOM.onlineUrl();
+    if (!el) return;
+    el.textContent = String(u || '');
+    el.title = String(u || '');
+  };
+
+  wv.addEventListener('did-navigate', () => setUrlLabel(wv.getURL()));
+  wv.addEventListener('did-navigate-in-page', () => setUrlLabel(wv.getURL()));
+
+  const backBtn = DOM.onlineBackBtn();
+  const fwdBtn = DOM.onlineForwardBtn();
+  const reloadBtn = DOM.onlineReloadBtn();
+  const externalBtn = DOM.onlineOpenExternalBtn();
+
+  if (backBtn) backBtn.addEventListener('click', () => { try { if (wv.canGoBack()) wv.goBack(); } catch (_) {} });
+  if (fwdBtn) fwdBtn.addEventListener('click', () => { try { if (wv.canGoForward()) wv.goForward(); } catch (_) {} });
+  if (reloadBtn) reloadBtn.addEventListener('click', () => { try { wv.reload(); } catch (_) {} });
+  if (externalBtn) externalBtn.addEventListener('click', () => {
+    const url = wv.getURL();
+    try {
+      window.electronAPI?.openExternal?.(url);
+    } catch (_) {
+      try { window.electronAPI?.copyToClipboard?.(url); } catch (_) {}
+    }
+  });
+
+  // Main-process navigation requests (tray/menu)
+  window.electronAPI?.onNavigateTo?.((route) => {
+    if (!route) return;
+    if (typeof route === 'string') {
+      if (route === 'online') openOnline('https://fileshot.io');
+      return;
+    }
+    if (route.tool === 'online') {
+      openOnline(route.url || 'https://fileshot.io');
+      return;
+    }
+    if (route.tool) switchToTool(route.tool);
+  });
+}
+
+function openOnline(url) {
+  if (state.currentTool !== 'online') switchToTool('online');
+  const wv = DOM.onlineWebview();
+  if (!wv) return;
+  const u = String(url || 'https://fileshot.io');
+  try {
+    if (!wv.getURL() || wv.getURL() === 'about:blank') {
+      wv.src = u;
+    } else {
+      wv.loadURL(u);
+    }
+  } catch (_) {
+    // Fallback: set src
+    wv.src = u;
+  }
+
+  const urlEl = DOM.onlineUrl();
+  if (urlEl) {
+    urlEl.textContent = u;
+    urlEl.title = u;
+  }
 }
 
 function explorerUp() {
@@ -906,12 +1204,4 @@ function explorerRefresh() {
   }
 }
 
-// ============================================================================
-// BACK BUTTON FOR "GO ONLINE" MODE
-// ============================================================================
-
-// This will be called from main.js when user tries to go online
-window.returnFromOnlineMode = () => {
-  switchToTool('vault');
-  console.log('Returned to offline mode');
-};
+// Legacy hook removed: online is now embedded inside the local shell.
