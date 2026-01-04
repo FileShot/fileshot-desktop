@@ -11,10 +11,11 @@
     <!-- Sidebar Navigation -->
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
-        <svg class="logo-mini" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          <polyline points="7 10 12 15 17 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          <line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <!-- FileShot Logo -->
+        <svg class="logo-mini" width="24" height="24" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+          <path d="M8 12 L8 52 L56 52 L56 24 L32 24 L28 20 L8 20 Z" fill="#FA3800" stroke="#D92F00" stroke-width="1.5" stroke-linejoin="round"/>
+          <path d="M8 20 L28 20 L32 24 L8 24 Z" fill="#D92F00"/>
+          <path d="M28 18 L26 28 L32 28 L28 38 L36 34 L34 24 L30 24 Z" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0.5" stroke-linejoin="miter"/>
         </svg>
         <button class="btn-collapse" id="btnCollapse" title="Toggle sidebar">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -263,16 +264,25 @@
 
           <div class="storage-card">
             <h3>Vault Actions</h3>
-            <button class="btn btn-secondary btn-full" id="btnExportVault">
+            <button class="btn btn-primary btn-full" id="btnExportVault">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                 <polyline points="7 10 12 15 17 10"></polyline>
                 <line x1="12" y1="15" x2="12" y2="3"></line>
               </svg>
-              Export Vault (Encrypted Backup)
+              Export Vault Backup
             </button>
 
-            <button class="btn btn-secondary btn-full" id="btnClearVault" style="margin-top: 8px;">
+            <button class="btn btn-secondary btn-full" id="btnImportVault" style="margin-top: 8px;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+              </svg>
+              Import Vault Backup
+            </button>
+
+            <button class="btn btn-danger btn-full" id="btnClearVault" style="margin-top: 8px;">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="3 6 5 4 21 4 23 6"></polyline>
                 <path d="M19 8v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V8M10 12v4M14 12v4"></path>
@@ -438,7 +448,7 @@
       </div>
       <div class="explorer-path" id="explorerPath">Loading…</div>
       <div class="explorer-list" id="explorerList"></div>
-      <div class="explorer-hint">Drag files to main area or external apps. Ctrl/Shift for multi-select.</div>
+      <div class="explorer-hint">Double-click files to add to vault. Click "Add" button to add, or drag to external apps. Ctrl/Shift for multi-select.</div>
     </aside>
   </div>
 

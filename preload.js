@@ -34,6 +34,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   vaultAddFolder: (folderPath) => ipcRenderer.invoke('vault-add-folder', folderPath),
   vaultRemove: (localId) => ipcRenderer.invoke('vault-remove', localId),
   vaultRevealKey: (localId) => ipcRenderer.invoke('vault-reveal-key', localId),
+  vaultOpen: (localId) => ipcRenderer.invoke('vault-open', localId),
+  vaultExportFile: (localId) => ipcRenderer.invoke('vault-export-file', localId),
+  vaultExportAll: () => ipcRenderer.invoke('vault-export-all'),
+  vaultImport: () => ipcRenderer.invoke('vault-import'),
 
   // ZKE upload
   uploadZke: (localId, options, progressCb) => {

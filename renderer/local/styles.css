@@ -43,6 +43,7 @@ body {
 .nav-item .chev { opacity: 0.9; transition: transform 0.2s; }
 .nav-item.tools-toggle[aria-expanded="true"] .chev { transform: rotate(180deg); }
 .tools-submenu { margin: 4px 0 0 10px; border-left: 1px solid rgba(255, 255, 255, 0.1); padding-left: 10px; display: flex; flex-direction: column; gap: 4px; }
+.tools-submenu[hidden] { display: none; }
 .nav-subitem { width: 100%; background: transparent; border: 0; color: var(--text); text-align: left; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; opacity: 0.92; }
 .nav-subitem:hover { background: rgba(255, 255, 255, 0.06); opacity: 1; }
 .sidebar.collapsed .nav-item span:not(svg) { display: none; }

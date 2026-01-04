@@ -164,8 +164,125 @@ async function encryptFileToZkeContainer({
   };
 }
 
+/**
+ * Parse the header from an FSZK file.
+ */
+function parseHeader(inputPath) {
+  const fd = fs.openSync(inputPath, 'r');
+  try {
+    const magicBuf = Buffer.alloc(4);
+    fs.readSync(fd, magicBuf, 0, 4, 0);
+    if (magicBuf.toString('utf8') !== STREAM_MAGIC) {
+      throw new Error('Invalid FSZK file: bad magic');
+    }
+
+    const versionBuf = Buffer.alloc(1);
+    fs.readSync(fd, versionBuf, 0, 1, 4);
+    const version = versionBuf[0];
+    if (version !== STREAM_VERSION) {
+      throw new Error(`Unsupported FSZK version: ${version}`);
+    }
+
+    const lenBuf = Buffer.alloc(4);
+    fs.readSync(fd, lenBuf, 0, 4, 5);
+    const jsonLen = lenBuf.readUInt32BE(0);
+
+    const jsonBuf = Buffer.alloc(jsonLen);
+    fs.readSync(fd, jsonBuf, 0, jsonLen, 9);
+    const header = JSON.parse(jsonBuf.toString('utf8'));
+
+    return {
+      header,
+      headerSize: 9 + jsonLen
+    };
+  } finally {
+    try { fs.closeSync(fd); } catch (_) {}
+  }
+}
+
+/**
+ * Decrypt an FSZK file back to its original form.
+ */
+async function decryptZkeContainer({
+  inputPath,
+  outputPath,
+  rawKeyBase64Url = null,
+  passphrase = null
+}) {
+  if (!inputPath) throw new Error('inputPath required');
+  if (!outputPath) throw new Error('outputPath required');
+
+  const { header, headerSize } = parseHeader(inputPath);
+
+  const keyMode = header.keyMode || 'raw';
+  let keyBytes = null;
+
+  if (keyMode === 'passphrase') {
+    if (!passphrase) throw new Error('Passphrase required for this file');
+    const salt = base64UrlDecode(header.kdf.salt);
+    const iterations = header.kdf.iterations || PBKDF2_ITERATIONS;
+    keyBytes = deriveKeyFromPassphrase(passphrase, salt, iterations);
+  } else {
+    if (!rawKeyBase64Url) throw new Error('Raw key required for this file');
+    keyBytes = base64UrlDecode(rawKeyBase64Url);
+    if (keyBytes.length !== 32) throw new Error('Invalid key length');
+  }
+
+  const baseIv = base64UrlDecode(header.iv);
+  const chunkSize = header.chunkSize || (512 * 1024);
+  const fileSize = header.fileSize;
+  const tagSize = 16; // AES-GCM auth tag
+
+  ensureDir(path.dirname(outputPath));
+
+  const inFd = fs.openSync(inputPath, 'r');
+  const outFd = fs.openSync(outputPath, 'w');
+
+  try {
+    let inputOffset = headerSize;
+    let outputOffset = 0;
+    let chunkIndex = 0;
+
+    while (outputOffset < fileSize) {
+      const plainChunkSize = Math.min(chunkSize, fileSize - outputOffset);
+      const cipherChunkSize = plainChunkSize + tagSize;
+
+      const cipherBuf = Buffer.alloc(cipherChunkSize);
+      const read = fs.readSync(inFd, cipherBuf, 0, cipherChunkSize, inputOffset);
+      if (read < cipherChunkSize) throw new Error('Unexpected end of encrypted file');
+
+      const iv = deriveChunkIv(baseIv, chunkIndex);
+      const ciphertext = cipherBuf.subarray(0, plainChunkSize);
+      const tag = cipherBuf.subarray(plainChunkSize, plainChunkSize + tagSize);
+
+      const decipher = crypto.createDecipheriv('aes-256-gcm', keyBytes, iv);
+      decipher.setAuthTag(tag);
+      const p1 = decipher.update(ciphertext);
+      const p2 = decipher.final();
+
+      fs.writeSync(outFd, p1);
+      if (p2 && p2.length) fs.writeSync(outFd, p2);
+
+      inputOffset += cipherChunkSize;
+      outputOffset += plainChunkSize;
+      chunkIndex++;
+    }
+  } finally {
+    try { fs.closeSync(inFd); } catch (_) {}
+    try { fs.closeSync(outFd); } catch (_) {}
+  }
+
+  return {
+    originalName: header.name,
+    originalMime: header.mime,
+    outputPath
+  };
+}
+
 module.exports = {
   base64UrlEncode,
   base64UrlDecode,
-  encryptFileToZkeContainer
+  encryptFileToZkeContainer,
+  decryptZkeContainer,
+  parseHeader
 };

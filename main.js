@@ -8,7 +8,7 @@ const FormData = require('form-data');
 const { autoUpdater } = require('electron-updater');
 const Store = require('electron-store');
 
-const { encryptFileToZkeContainer } = require('./utils/zke-stream');
+const { encryptFileToZkeContainer, decryptZkeContainer, parseHeader } = require('./utils/zke-stream');
 
 // Initialize electron-store for settings
 const store = new Store();
@@ -67,26 +67,40 @@ function safeStat(p) {
   try { return fs.statSync(p); } catch (_) { return null; }
 }
 
-function addFileToVault(sourcePath) {
+/**
+ * Add a file to the vault with AES-256-GCM encryption.
+ * The file is encrypted using a randomly generated key stored in the vault metadata.
+ */
+async function addFileToVault(sourcePath) {
   ensureVaultDirs();
   const st = safeStat(sourcePath);
   if (!st || !st.isFile()) return null;
 
   const id = genId();
   const name = path.basename(sourcePath);
-  const ext = path.extname(name);
-  const storedName = `${id}${ext || ''}`;
+  const storedName = `${id}.fszk`; // Always use .fszk extension for encrypted files
   const destPath = path.join(getVaultFilesDir(), storedName);
 
-  fs.copyFileSync(sourcePath, destPath);
+  // Encrypt the file using ZKE format
+  const result = await encryptFileToZkeContainer({
+    inputPath: sourcePath,
+    outputPath: destPath,
+    originalName: name,
+    mode: 'raw' // Use random key (stored in vault metadata)
+  });
+
+  const encryptedStat = safeStat(destPath);
 
   return {
     id,
     name,
-    size: st.size,
+    originalSize: st.size,
+    size: encryptedStat ? encryptedStat.size : st.size,
     addedAt: Date.now(),
     localPath: destPath,
-    sourcePath
+    sourcePath,
+    encrypted: true,
+    encryptionKey: result.rawKey // Base64url encoded AES-256 key
   };
 }
 
@@ -1007,7 +1021,7 @@ ipcMain.handle('vault-add', async (_event, paths) => {
 
   for (const p of list) {
     try {
-      const entry = addFileToVault(p);
+      const entry = await addFileToVault(p);
       if (entry) {
         items.unshift(entry);
         added++;
@@ -1032,7 +1046,7 @@ ipcMain.handle('vault-add-folder', async (_event, folderPath) => {
 
   for (const p of files) {
     try {
-      const entry = addFileToVault(p);
+      const entry = await addFileToVault(p);
       if (entry) {
         items.unshift(entry);
         added++;
@@ -1072,8 +1086,177 @@ ipcMain.handle('vault-reveal-key', async (_event, localId) => {
   const items = getVaultItems();
   const it = items.find((x) => String(x.id) === id);
   if (!it) return { success: false };
-  // Only reveal a stored share key (raw-key mode). Passphrase mode has no share key.
-  return { success: true, shareKey: it?.lastUpload?.shareKey || null, shareUrl: it?.lastUpload?.shareUrl || null };
+  // Return the encryption key for this vault item
+  return { 
+    success: true, 
+    encryptionKey: it.encryptionKey || null,
+    shareKey: it?.lastUpload?.shareKey || null, 
+    shareUrl: it?.lastUpload?.shareUrl || null 
+  };
+});
+
+// Open/preview a vault file by decrypting to temp and opening
+ipcMain.handle('vault-open', async (_event, localId) => {
+  const id = String(localId || '');
+  const items = getVaultItems();
+  const it = items.find((x) => String(x.id) === id);
+  if (!it) return { success: false, error: 'Not found' };
+  if (!it.localPath || !fs.existsSync(it.localPath)) return { success: false, error: 'File missing' };
+
+  // For encrypted files, decrypt to temp folder
+  if (it.encrypted && it.encryptionKey) {
+    try {
+      ensureVaultDirs();
+      const tmpPath = path.join(getVaultTmpDir(), it.name);
+      await decryptZkeContainer({
+        inputPath: it.localPath,
+        outputPath: tmpPath,
+        rawKeyBase64Url: it.encryptionKey
+      });
+      await shell.openPath(tmpPath);
+      return { success: true, tmpPath };
+    } catch (e) {
+      return { success: false, error: e.message || String(e) };
+    }
+  }
+
+  // For legacy non-encrypted files, open directly
+  try {
+    await shell.openPath(it.localPath);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+// Export a single vault file (decrypt and save to user-chosen location)
+ipcMain.handle('vault-export-file', async (_event, localId) => {
+  const id = String(localId || '');
+  const items = getVaultItems();
+  const it = items.find((x) => String(x.id) === id);
+  if (!it) return { success: false, error: 'Not found' };
+  if (!it.localPath || !fs.existsSync(it.localPath)) return { success: false, error: 'File missing' };
+
+  const result = await dialog.showSaveDialog(mainWindow, {
+    defaultPath: it.name,
+    title: 'Export Decrypted File'
+  });
+
+  if (result.canceled || !result.filePath) return { success: false, canceled: true };
+
+  if (it.encrypted && it.encryptionKey) {
+    try {
+      await decryptZkeContainer({
+        inputPath: it.localPath,
+        outputPath: result.filePath,
+        rawKeyBase64Url: it.encryptionKey
+      });
+      return { success: true, path: result.filePath };
+    } catch (e) {
+      return { success: false, error: e.message || String(e) };
+    }
+  }
+
+  // Legacy non-encrypted: just copy
+  try {
+    fs.copyFileSync(it.localPath, result.filePath);
+    return { success: true, path: result.filePath };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+// Export entire vault as encrypted backup archive
+ipcMain.handle('vault-export-all', async () => {
+  const items = getVaultItems();
+  if (!items.length) return { success: false, error: 'Vault is empty' };
+
+  const result = await dialog.showSaveDialog(mainWindow, {
+    defaultPath: `fileshot-vault-backup-${Date.now()}.json`,
+    title: 'Export Vault Backup',
+    filters: [{ name: 'FileShot Vault Backup', extensions: ['json'] }]
+  });
+
+  if (result.canceled || !result.filePath) return { success: false, canceled: true };
+
+  try {
+    // Create backup object with metadata and base64-encoded encrypted files
+    const backup = {
+      version: 1,
+      exportedAt: Date.now(),
+      files: []
+    };
+
+    for (const it of items) {
+      if (!it.localPath || !fs.existsSync(it.localPath)) continue;
+      const fileData = fs.readFileSync(it.localPath);
+      backup.files.push({
+        id: it.id,
+        name: it.name,
+        originalSize: it.originalSize || it.size,
+        addedAt: it.addedAt,
+        encrypted: it.encrypted || false,
+        encryptionKey: it.encryptionKey || null,
+        data: fileData.toString('base64')
+      });
+    }
+
+    fs.writeFileSync(result.filePath, JSON.stringify(backup, null, 2));
+    return { success: true, path: result.filePath, count: backup.files.length };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+// Import vault from backup
+ipcMain.handle('vault-import', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Import Vault Backup',
+    filters: [{ name: 'FileShot Vault Backup', extensions: ['json'] }],
+    properties: ['openFile']
+  });
+
+  if (result.canceled || !result.filePaths.length) return { success: false, canceled: true };
+
+  try {
+    const content = fs.readFileSync(result.filePaths[0], 'utf8');
+    const backup = JSON.parse(content);
+    
+    if (!backup.files || !Array.isArray(backup.files)) {
+      return { success: false, error: 'Invalid backup format' };
+    }
+
+    ensureVaultDirs();
+    const items = getVaultItems();
+    let imported = 0;
+
+    for (const file of backup.files) {
+      const id = genId();
+      const storedName = `${id}.fszk`;
+      const destPath = path.join(getVaultFilesDir(), storedName);
+      
+      const fileData = Buffer.from(file.data, 'base64');
+      fs.writeFileSync(destPath, fileData);
+
+      items.unshift({
+        id,
+        name: file.name,
+        originalSize: file.originalSize,
+        size: fileData.length,
+        addedAt: file.addedAt || Date.now(),
+        localPath: destPath,
+        encrypted: file.encrypted || false,
+        encryptionKey: file.encryptionKey || null,
+        importedFrom: result.filePaths[0]
+      });
+      imported++;
+    }
+
+    setVaultItems(items);
+    return { success: true, imported };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
 });
 
 function sendUploadProgress(event, requestId, payload) {

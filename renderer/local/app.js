@@ -560,7 +560,7 @@ function renderVaultList() {
           <path d="M24 4v20M4 24h20m0 0h20M24 44v-20m0 0v-20" />
         </svg>
         <div class="empty-title">No files yet</div>
-        <div class="empty-description">Drop files here, or use the buttons above to add files and folders to your encrypted vault.</div>
+        <div class="empty-description">Drop files here, or use the buttons above to add files and folders to your encrypted vault. Files are automatically encrypted with AES-256-GCM.</div>
       </div>
     `;
     return;
@@ -569,26 +569,68 @@ function renderVaultList() {
   vaultList.innerHTML = state.vaultFiles.map(file => {
     const addedAt = file.addedAt ? new Date(file.addedAt).toLocaleString() : '';
     const metaBits = [];
-    if (typeof file.size === 'number') metaBits.push(fmtBytes(file.size));
+    const displaySize = file.originalSize || file.size;
+    if (typeof displaySize === 'number') metaBits.push(fmtBytes(displaySize));
+    if (file.encrypted) metaBits.push('🔒 Encrypted');
     if (addedAt) metaBits.push(`Added: ${addedAt}`);
     return `
     <div class="vault-item">
       <div class="vault-item-info">
-        <div class="name">📄 ${escapeHtml(file.name || '')}</div>
+        <div class="name">${file.encrypted ? '🔐' : '📄'} ${escapeHtml(file.name || '')}</div>
         <div class="meta">${escapeHtml(metaBits.join(' • '))}</div>
       </div>
       <div class="vault-item-buttons">
-        <button class="btn" onclick="window.removeVaultItem('${String(file.id)}')">Remove</button>
+        <button class="btn btn-primary" onclick="window.openVaultItem('${String(file.id)}')" title="Open/Preview">Open</button>
+        <button class="btn btn-secondary" onclick="window.exportVaultItem('${String(file.id)}')" title="Export decrypted copy">Export</button>
+        <button class="btn btn-danger" onclick="window.removeVaultItem('${String(file.id)}')" title="Remove from vault">Remove</button>
       </div>
     </div>
   `;
   }).join('');
 }
 
+// Open/preview a vault file
+window.openVaultItem = async (fileId) => {
+  const id = String(fileId || '');
+  if (!id) return;
+  if (!window.electronAPI || typeof window.electronAPI.vaultOpen !== 'function') {
+    alert('Open feature not available');
+    return;
+  }
+  try {
+    const res = await window.electronAPI.vaultOpen(id);
+    if (!res.success) {
+      alert(`Failed to open: ${res.error || 'Unknown error'}`);
+    }
+  } catch (e) {
+    alert(`Error: ${e.message || e}`);
+  }
+};
+
+// Export a single vault file
+window.exportVaultItem = async (fileId) => {
+  const id = String(fileId || '');
+  if (!id) return;
+  if (!window.electronAPI || typeof window.electronAPI.vaultExportFile !== 'function') {
+    alert('Export feature not available');
+    return;
+  }
+  try {
+    const res = await window.electronAPI.vaultExportFile(id);
+    if (res.canceled) return;
+    if (!res.success) {
+      alert(`Failed to export: ${res.error || 'Unknown error'}`);
+    }
+  } catch (e) {
+    alert(`Error: ${e.message || e}`);
+  }
+};
+
 window.removeVaultItem = async (fileId) => {
   const id = String(fileId || '');
   if (!id) return;
   if (!window.electronAPI || typeof window.electronAPI.vaultRemove !== 'function') return;
+  if (!confirm('Remove this file from the vault? The encrypted copy will be deleted.')) return;
   try {
     await window.electronAPI.vaultRemove(id);
   } finally {
@@ -644,8 +686,10 @@ async function uploadVault() {
 function initStorageTool() {
   const clearBtn = DOM.clearVaultBtn();
   const exportBtn = DOM.exportVaultBtn();
+  const importBtn = document.getElementById('btnImportVault');
   if (clearBtn) clearBtn.addEventListener('click', clearVault);
   if (exportBtn) exportBtn.addEventListener('click', exportVault);
+  if (importBtn) importBtn.addEventListener('click', importVault);
 }
 
 function calculateStorageUsage() {
@@ -690,8 +734,45 @@ function clearVault() {
     .finally(() => refreshVault());
 }
 
-function exportVault() {
-  alert('Export Vault is not wired up yet. (Next step: add a main-process vault-export handler that creates an encrypted backup.)');
+async function exportVault() {
+  if (state.vaultFiles.length === 0) {
+    alert('Vault is empty. Add files first.');
+    return;
+  }
+  if (!window.electronAPI || typeof window.electronAPI.vaultExportAll !== 'function') {
+    alert('Export feature not available');
+    return;
+  }
+  try {
+    const res = await window.electronAPI.vaultExportAll();
+    if (res.canceled) return;
+    if (res.success) {
+      alert(`Vault exported successfully!\n${res.count} file(s) saved to:\n${res.path}`);
+    } else {
+      alert(`Export failed: ${res.error || 'Unknown error'}`);
+    }
+  } catch (e) {
+    alert(`Error: ${e.message || e}`);
+  }
+}
+
+async function importVault() {
+  if (!window.electronAPI || typeof window.electronAPI.vaultImport !== 'function') {
+    alert('Import feature not available');
+    return;
+  }
+  try {
+    const res = await window.electronAPI.vaultImport();
+    if (res.canceled) return;
+    if (res.success) {
+      alert(`Vault imported successfully!\n${res.imported} file(s) added.`);
+      refreshVault();
+    } else {
+      alert(`Import failed: ${res.error || 'Unknown error'}`);
+    }
+  } catch (e) {
+    alert(`Error: ${e.message || e}`);
+  }
 }
 
 // ============================================================================
