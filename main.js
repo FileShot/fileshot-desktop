@@ -457,6 +457,8 @@ ipcMain.on('start-drag', async (event, paths) => {
     } catch (_) {
       wc.startDrag({ file: dragFiles[0], icon });
     }
+  } catch (err) {
+    console.error('Drag operation failed:', err);
   }
 });
 
