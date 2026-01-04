@@ -1,6 +1,6 @@
 {
   "name": "fileshot-desktop",
-  "version": "1.0.0",
+  "version": "1.4.2",
   "description": "FileShot.io Desktop Application - Fast, Private File Sharing",
   "main": "main.js",
   "scripts": {
