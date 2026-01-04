@@ -16,6 +16,7 @@ const store = new Store();
 let mainWindow = null;
 let tray = null;
 let uploadQueue = [];
+let isQuitting = false;
 
 // App configuration
 const isDev = process.argv.includes('--dev');
@@ -184,22 +185,10 @@ function createWindow() {
     mainWindow.show();
   });
 
-  // Handle window close - minimize to tray instead
+  // Handle window close - allow actual close, don't prevent it
   mainWindow.on('close', (event) => {
-    if (!app.isQuitting) {
-      event.preventDefault();
-      mainWindow.hide();
-      
-      // Show notification
-      // NOTE: tray.displayBalloon is Windows-only.
-      if (tray && process.platform === 'win32' && typeof tray.displayBalloon === 'function') {
-        tray.displayBalloon({
-          title: 'FileShot',
-          content: 'FileShot is still running in the background. Click the tray icon to open.',
-          icon: path.join(__dirname, 'assets', 'icon.png')
-        });
-      }
-    }
+    // Allow the window to close normally
+    // Don't minimize to tray on close
   });
 
   // Handle external links
@@ -830,7 +819,7 @@ app.on('activate', () => {
 });
 
 app.on('before-quit', () => {
-  app.isQuitting = true;
+  isQuitting = true;
 });
 
 // Handle uncaught exceptions

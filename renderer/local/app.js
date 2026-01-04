@@ -36,7 +36,7 @@ const DOM = {
   dropZoneText: () => document.querySelector('.drop-zone-text'),
   
   // Tool panels
-  toolPanel: (toolName) => document.getElementById(`${toolName}-panel`),
+  toolPanel: (toolName) => document.getElementById(`tool-${toolName}`),
   
   // Specific tools
   vaultAddBtn: () => document.getElementById('addFilesBtn'),
@@ -128,13 +128,13 @@ function switchToTool(toolName) {
   
   // Hide all panels
   document.querySelectorAll('.tool-panel').forEach(panel => {
-    panel.style.display = 'none';
+    panel.hidden = true;
   });
   
-  // Show selected panel
-  const panel = DOM.toolPanel(toolName);
+  // Show selected panel - ID is tool-{name}
+  const panel = document.getElementById(`tool-${toolName}`);
   if (panel) {
-    panel.style.display = 'block';
+    panel.hidden = false;
   }
   
   // Update topbar title with icons
@@ -479,7 +479,7 @@ function initSettingsTool() {
 function initToolPanels() {
   // Initialize all tool panels visibility
   document.querySelectorAll('.tool-panel').forEach(panel => {
-    panel.style.display = 'none';
+    panel.hidden = true;
   });
 }
 
