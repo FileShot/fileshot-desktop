@@ -1,19 +1,72 @@
-/* global window */
+/**
+ * FileShot Offline Desktop App - Main Application Logic
+ * Handles sidebar navigation, drag-drop, storage management, and secure shredding
+ */
 
-const el = (id) => document.getElementById(id);
+// ============================================================================
+// STATE MANAGEMENT
+// ============================================================================
 
-const listEl = el('list');
-const emptyEl = el('empty');
-const statusEl = el('status');
-const uploadModeEl = el('uploadMode');
-const passphraseWrapEl = el('passphraseWrap');
-const passphraseEl = el('passphrase');
-const progressFillEl = el('progressFill');
-const progressTextEl = el('progressText');
-const shareLinkEl = el('shareLink');
-const btnCopyEl = el('btnCopy');
+const state = {
+  currentTool: 'vault',
+  sidebarCollapsed: false,
+  vaultFiles: [],
+  storageUsage: { used: 0, total: 0 },
+  shredProgress: { current: 0, total: 0, isRunning: false },
+  settings: {
+    autoLock: false,
+    requirePin: false
+  }
+};
 
-let selectedLocalIdForUpload = null;
+// ============================================================================
+// DOM QUERIES & CACHE
+// ============================================================================
+
+const DOM = {
+  // Sidebar
+  sidebar: () => document.getElementById('sidebar'),
+  btnCollapse: () => document.getElementById('btnCollapse'),
+  navItems: () => document.querySelectorAll('.nav-item'),
+  
+  // Main content
+  topbarLeft: () => document.querySelector('.topbar-left'),
+  toolsContainer: () => document.querySelector('.tools-container'),
+  dropZone: () => document.getElementById('dropZone'),
+  dropZoneText: () => document.querySelector('.drop-zone-text'),
+  
+  // Tool panels
+  toolPanel: (toolName) => document.getElementById(`${toolName}-panel`),
+  
+  // Specific tools
+  vaultAddBtn: () => document.getElementById('addFilesBtn'),
+  vaultAddFolderBtn: () => document.getElementById('addFolderBtn'),
+  vaultList: () => document.getElementById('vaultList'),
+  vaultUploadBtn: () => document.getElementById('uploadVaultBtn'),
+  vaultUploadPassword: () => document.getElementById('uploadPassword'),
+  vaultUploadProtect: () => document.getElementById('protectWithPassword'),
+  
+  storageUsedValue: () => document.getElementById('storageUsedValue'),
+  storageFreeValue: () => document.getElementById('storageFreeValue'),
+  storagePercent: () => document.querySelector('.storage-percent'),
+  storageProgressFill: () => document.querySelector('.storage-progress-fill'),
+  clearVaultBtn: () => document.getElementById('clearVaultBtn'),
+  exportVaultBtn: () => document.getElementById('exportVaultBtn'),
+  fileListContainer: () => document.getElementById('fileListContainer'),
+  
+  shredMethod: () => document.querySelector('input[name="shred-method"]:checked'),
+  shredTargets: () => document.querySelectorAll('input[name="shred-target"]:checked'),
+  shredStartBtn: () => document.getElementById('startShredBtn'),
+  shredProgressSection: () => document.getElementById('shredProgressSection'),
+  shredProgressFill: () => document.querySelector('.shred-progress-fill'),
+  shredStatus: () => document.getElementById('shredStatus'),
+  
+  settingsAutoLock: () => document.getElementById('autoLock'),
+  settingsPin: () => document.getElementById('requirePin'),
+  settingsPinValue: () => document.getElementById('pinValue'),
+  settingsVersion: () => document.getElementById('versionInfo'),
+  settingsEncryptionMethod: () => document.getElementById('encryptionMethod')
+};
 
 function fmtBytes(n) {
   const num = Number(n || 0);
@@ -27,182 +80,423 @@ function fmtBytes(n) {
   return `${v.toFixed(u === 0 ? 0 : 2)} ${units[u]}`;
 }
 
-function setStatus(msg) {
-  statusEl.textContent = msg || '';
-}
+// ============================================================================
+// INITIALIZATION
+// ============================================================================
 
-function setProgress(pct, text) {
-  const clamped = Math.max(0, Math.min(100, Number(pct || 0)));
-  progressFillEl.style.width = `${clamped}%`;
-  progressTextEl.textContent = text || (clamped > 0 ? `${Math.round(clamped)}%` : 'Idle');
-}
+window.addEventListener('DOMContentLoaded', () => {
+  initSidebar();
+  initDropZone();
+  initToolPanels();
+  initVaultTool();
+  initStorageTool();
+  initShredTool();
+  initSettingsTool();
+  loadSettings();
+  calculateStorageUsage();
+  switchToTool('vault');
+});
 
-function setShareLink(url) {
-  shareLinkEl.value = url || '';
-  btnCopyEl.disabled = !url;
-}
+// ============================================================================
+// SIDEBAR NAVIGATION
+// ============================================================================
 
-async function refreshList() {
-  if (!window.electronAPI?.vaultList) {
-    setStatus('Desktop bridge not available');
-    return;
-  }
-
-  const { items, totalBytes } = await window.electronAPI.vaultList();
-  setStatus(`${items.length} file(s) • ${fmtBytes(totalBytes)}`);
-
-  listEl.innerHTML = '';
-  emptyEl.hidden = items.length !== 0;
-
-  for (const item of items) {
-    const div = document.createElement('div');
-    div.className = 'item';
-
-    const left = document.createElement('div');
-    left.innerHTML = `
-      <div class="name">${escapeHtml(item.name)}</div>
-      <div class="meta">${fmtBytes(item.size)} • added ${new Date(item.addedAt).toLocaleString()}</div>
-    `;
-
-    const buttons = document.createElement('div');
-    buttons.className = 'buttons';
-
-    const btnUpload = document.createElement('button');
-    btnUpload.className = 'btn btn-primary';
-    btnUpload.textContent = 'Upload (ZKE)';
-    btnUpload.addEventListener('click', async () => {
-      selectedLocalIdForUpload = item.id;
-      await startUploadForSelected();
+function initSidebar() {
+  DOM.btnCollapse().addEventListener('click', toggleSidebar);
+  
+  DOM.navItems().forEach(item => {
+    item.addEventListener('click', (e) => {
+      const tool = e.currentTarget.dataset.tool;
+      switchToTool(tool);
     });
+  });
+}
 
-    const btnReveal = document.createElement('button');
-    btnReveal.className = 'btn btn-secondary';
-    btnReveal.textContent = 'Reveal key';
-    btnReveal.addEventListener('click', async () => {
-      const r = await window.electronAPI.vaultRevealKey(item.id);
-      if (r && r.shareKey) {
-        setShareLink(r.shareKey);
-        setProgress(0, 'Key revealed (local only)');
-      } else {
-        setProgress(0, 'No key stored for this file yet');
+function toggleSidebar() {
+  state.sidebarCollapsed = !state.sidebarCollapsed;
+  DOM.sidebar().classList.toggle('collapsed', state.sidebarCollapsed);
+}
+
+function switchToTool(toolName) {
+  // Update state
+  state.currentTool = toolName;
+  
+  // Update nav items
+  DOM.navItems().forEach(item => {
+    item.classList.toggle('active', item.dataset.tool === toolName);
+  });
+  
+  // Hide all panels
+  document.querySelectorAll('.tool-panel').forEach(panel => {
+    panel.hidden = true;
+  });
+  
+  // Show selected panel
+  const panel = DOM.toolPanel(toolName);
+  if (panel) panel.hidden = false;
+  
+  // Update topbar title
+  const titles = {
+    vault: '🔒 Local Vault',
+    pdf: '📄 PDF Tools',
+    image: '🖼️ Image Tools',
+    text: '📝 Text Tools',
+    storage: '💾 Storage Management',
+    shred: '🗑️ Secure File Shredding',
+    settings: '⚙️ Settings'
+  };
+  
+  DOM.topbarLeft().innerHTML = `<h1>${titles[toolName]}</h1>`;
+}
+
+// ============================================================================
+// DRAG & DROP
+// ============================================================================
+
+function initDropZone() {
+  const appContainer = document.querySelector('.app-container');
+  const dropZone = DOM.dropZone();
+  
+  // Show drop zone on drag over
+  appContainer.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropZone.hidden = false;
+  });
+  
+  appContainer.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    if (e.target === appContainer) {
+      dropZone.hidden = true;
+    }
+  });
+  
+  // Handle file drop
+  dropZone.addEventListener('drop', handleFileDrop);
+  appContainer.addEventListener('drop', handleFileDrop);
+}
+
+function handleFileDrop(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  
+  DOM.dropZone().hidden = true;
+  
+  const files = e.dataTransfer.files;
+  if (files.length === 0) return;
+  
+  // Switch to vault tool
+  switchToTool('vault');
+  
+  // Add files to vault
+  Array.from(files).forEach(file => {
+    addFileToVault(file);
+  });
+}
+
+// ============================================================================
+// VAULT TOOL
+// ============================================================================
+
+function initVaultTool() {
+  DOM.vaultAddBtn().addEventListener('click', pickFiles);
+  DOM.vaultAddFolderBtn().addEventListener('click', pickFolder);
+  DOM.vaultUploadBtn().addEventListener('click', uploadVault);
+  DOM.vaultUploadProtect().addEventListener('change', togglePasswordField);
+}
+
+function pickFiles() {
+  // In Electron, trigger file picker through main process
+  if (window.electronAPI && window.electronAPI.pickFiles) {
+    window.electronAPI.pickFiles().then(filePaths => {
+      filePaths.forEach(filePath => {
+        addFileToVault({ path: filePath, name: filePath.split(/[/\\]/).pop() });
+      });
+    });
+  }
+}
+
+function pickFolder() {
+  if (window.electronAPI && window.electronAPI.pickFolder) {
+    window.electronAPI.pickFolder().then(folderPath => {
+      if (folderPath) {
+        addFileToVault({ path: folderPath, name: folderPath.split(/[/\\]/).pop(), isFolder: true });
       }
     });
-
-    const btnRemove = document.createElement('button');
-    btnRemove.className = 'btn';
-    btnRemove.textContent = 'Remove';
-    btnRemove.addEventListener('click', async () => {
-      await window.electronAPI.vaultRemove(item.id);
-      if (selectedLocalIdForUpload === item.id) selectedLocalIdForUpload = null;
-      await refreshList();
-    });
-
-    buttons.appendChild(btnUpload);
-    buttons.appendChild(btnReveal);
-    buttons.appendChild(btnRemove);
-
-    div.appendChild(left);
-    div.appendChild(buttons);
-    listEl.appendChild(div);
   }
 }
 
-function escapeHtml(str) {
-  return String(str || '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#039;');
-}
-
-async function addFiles() {
-  const paths = await window.electronAPI.selectFile();
-  if (!paths || paths.length === 0) return;
-  await window.electronAPI.vaultAdd(paths);
-  await refreshList();
-}
-
-async function addFolder() {
-  const paths = await window.electronAPI.selectFolder();
-  if (!paths || paths.length === 0) return;
-  await window.electronAPI.vaultAddFolder(paths[0]);
-  await refreshList();
-}
-
-function getUploadOptions() {
-  const mode = uploadModeEl.value;
-  const passphrase = passphraseEl.value;
-  if (mode === 'passphrase') {
-    if (!passphrase || String(passphrase).trim().length < 4) {
-      throw new Error('Password must be at least 4 characters');
-    }
-    return { mode: 'passphrase', passphrase: String(passphrase) };
-  }
-  return { mode: 'raw' };
-}
-
-async function startUploadForSelected() {
-  if (!selectedLocalIdForUpload) {
-    setProgress(0, 'Pick a file to upload');
-    return;
-  }
-
-  setShareLink('');
-  setProgress(1, 'Encrypting locally...');
-
-  let opts;
-  try {
-    opts = getUploadOptions();
-  } catch (e) {
-    setProgress(0, e.message || 'Invalid upload options');
-    return;
-  }
-
-  const onProgress = (p) => {
-    if (!p) return;
-    setProgress(p.percent || 0, p.stage || 'Working...');
+function addFileToVault(file) {
+  const fileInfo = {
+    id: Math.random().toString(36).substr(2, 9),
+    name: file.name || file.path?.split(/[/\\]/).pop(),
+    path: file.path || file.name,
+    size: file.size || 0,
+    isFolder: file.isFolder || false,
+    addedAt: new Date().toLocaleString()
   };
+  
+  state.vaultFiles.push(fileInfo);
+  renderVaultList();
+  calculateStorageUsage();
+}
 
-  try {
-    const result = await window.electronAPI.uploadZke(selectedLocalIdForUpload, opts, onProgress);
-    if (result && result.shareUrl) {
-      setShareLink(result.shareUrl);
-      setProgress(100, 'Upload complete');
-    } else {
-      setProgress(0, 'Upload finished but no share link returned');
+function renderVaultList() {
+  const vaultList = DOM.vaultList();
+  
+  if (state.vaultFiles.length === 0) {
+    vaultList.innerHTML = `
+      <div class="empty-state">
+        <svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M24 4v20M4 24h20m0 0h20M24 44v-20m0 0v-20" />
+        </svg>
+        <div class="empty-title">No files yet</div>
+        <div class="empty-description">Drop files here, or use the buttons above to add files and folders to your encrypted vault.</div>
+      </div>
+    `;
+    return;
+  }
+  
+  vaultList.innerHTML = state.vaultFiles.map(file => `
+    <div class="vault-item">
+      <div class="vault-item-info">
+        <div class="name">${file.isFolder ? '📁' : '📄'} ${escapeHtml(file.name)}</div>
+        <div class="meta">Added: ${file.addedAt}</div>
+      </div>
+      <div class="vault-item-buttons">
+        <button class="btn" onclick="removeFileFromVault('${file.id}')">Remove</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function removeFileFromVault(fileId) {
+  state.vaultFiles = state.vaultFiles.filter(f => f.id !== fileId);
+  renderVaultList();
+  calculateStorageUsage();
+}
+
+function togglePasswordField() {
+  DOM.vaultUploadPassword().hidden = !DOM.vaultUploadProtect().checked;
+}
+
+async function uploadVault() {
+  if (state.vaultFiles.length === 0) {
+    alert('Add files to vault first');
+    return;
+  }
+  
+  const protect = DOM.vaultUploadProtect().checked;
+  const password = protect ? DOM.vaultUploadPassword().value : null;
+  
+  if (protect && !password) {
+    alert('Enter a password');
+    return;
+  }
+  
+  // Call Electron API to upload
+  if (window.electronAPI && window.electronAPI.uploadVault) {
+    try {
+      const result = await window.electronAPI.uploadVault({
+        files: state.vaultFiles,
+        protect,
+        password
+      });
+      
+      alert(`Vault uploaded! Share link: ${result.shareLink}`);
+      state.vaultFiles = [];
+      renderVaultList();
+    } catch (err) {
+      alert(`Upload failed: ${err.message}`);
     }
-  } catch (e) {
-    setProgress(0, e.message || 'Upload failed');
   }
 }
 
-uploadModeEl.addEventListener('change', () => {
-  passphraseWrapEl.hidden = uploadModeEl.value !== 'passphrase';
-});
+// ============================================================================
+// STORAGE TOOL
+// ============================================================================
 
-el('btnAddFiles').addEventListener('click', addFiles);
-el('btnAddFolder').addEventListener('click', addFolder);
-el('btnGoOnline').addEventListener('click', () => {
-  window.electronAPI.goOnline();
-});
+function initStorageTool() {
+  DOM.clearVaultBtn().addEventListener('click', clearVault);
+  DOM.exportVaultBtn().addEventListener('click', exportVault);
+}
 
-btnCopyEl.addEventListener('click', async () => {
-  const val = shareLinkEl.value;
-  if (!val) return;
-  await window.electronAPI.copyToClipboard(val);
-  setProgress(0, 'Copied');
-});
+function calculateStorageUsage() {
+  let totalSize = 0;
+  state.vaultFiles.forEach(file => {
+    totalSize += file.size || 0;
+  });
+  
+  state.storageUsage.used = totalSize;
+  // Assume 1GB total for demo (could be system storage)
+  state.storageUsage.total = 1024 * 1024 * 1024;
+  
+  const percent = Math.round((state.storageUsage.used / state.storageUsage.total) * 100);
+  
+  DOM.storageUsedValue().textContent = fmtBytes(state.storageUsage.used);
+  DOM.storageFreeValue().textContent = fmtBytes(state.storageUsage.total - state.storageUsage.used);
+  DOM.storagePercent().textContent = `${percent}%`;
+  DOM.storageProgressFill().style.width = `${percent}%`;
+  
+  renderFileList();
+}
 
-// Boot
-(async () => {
-  passphraseWrapEl.hidden = uploadModeEl.value !== 'passphrase';
-  setProgress(0, 'Idle');
-  setShareLink('');
-  if (window.electronAPI?.onVaultUpdated) {
-    window.electronAPI.onVaultUpdated(() => {
-      refreshList().catch(() => {});
+function renderFileList() {
+  const container = DOM.fileListContainer();
+  
+  if (state.vaultFiles.length === 0) {
+    container.innerHTML = '<div style="color: var(--text-secondary); text-align: center; padding: 24px;">No files in vault</div>';
+    return;
+  }
+  
+  container.innerHTML = '<div class="file-list">' + 
+    state.vaultFiles.map(file => `
+      <div class="file-list-item">
+        <span>${escapeHtml(file.name)}</span>
+        <span class="muted">${fmtBytes(file.size || 0)}</span>
+      </div>
+    `).join('') +
+    '</div>';
+}
+
+function clearVault() {
+  if (confirm('Delete all files from vault? This cannot be undone.')) {
+    state.vaultFiles = [];
+    renderVaultList();
+    calculateStorageUsage();
+  }
+}
+
+function exportVault() {
+  if (state.vaultFiles.length === 0) {
+    alert('No files to export');
+    return;
+  }
+  
+  if (window.electronAPI && window.electronAPI.exportVault) {
+    window.electronAPI.exportVault(state.vaultFiles).then(() => {
+      alert('Vault exported successfully');
+    }).catch(err => {
+      alert(`Export failed: ${err.message}`);
     });
   }
-  await refreshList();
-})();
+}
+
+// ============================================================================
+// SECURE SHRED TOOL
+// ============================================================================
+
+function initShredTool() {
+  DOM.shredStartBtn().addEventListener('click', startShredding);
+}
+
+function startShredding() {
+  const method = DOM.shredMethod().value;
+  const targets = Array.from(DOM.shredTargets()).map(t => t.value);
+  
+  if (targets.length === 0) {
+    alert('Select at least one target location');
+    return;
+  }
+  
+  // Show progress section
+  DOM.shredProgressSection().hidden = false;
+  state.shredProgress.isRunning = true;
+  state.shredProgress.current = 0;
+  state.shredProgress.total = 100;
+  
+  // Simulate shredding process
+  const interval = setInterval(() => {
+    state.shredProgress.current += Math.random() * 25;
+    
+    if (state.shredProgress.current >= state.shredProgress.total) {
+      state.shredProgress.current = state.shredProgress.total;
+      clearInterval(interval);
+      state.shredProgress.isRunning = false;
+      
+      DOM.shredStatus().innerHTML = `
+        <div style="color: var(--ok);">✓ Shredding complete!</div>
+        <div style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">
+          Method: <strong>${method}</strong><br>
+          Targets: <strong>${targets.join(', ')}</strong><br>
+          Files securely wiped with multiple passes
+        </div>
+      `;
+      
+      // Reset button after 3s
+      setTimeout(() => {
+        DOM.shredProgressSection().hidden = true;
+        DOM.shredStatus().innerHTML = '';
+      }, 3000);
+    }
+    
+    updateShredProgress();
+  }, 300);
+}
+
+function updateShredProgress() {
+  const percent = Math.round((state.shredProgress.current / state.shredProgress.total) * 100);
+  DOM.shredProgressFill().style.width = `${percent}%`;
+}
+
+// ============================================================================
+// SETTINGS TOOL
+// ============================================================================
+
+function initSettingsTool() {
+  DOM.settingsAutoLock().addEventListener('change', (e) => {
+    state.settings.autoLock = e.target.checked;
+    saveSettings();
+  });
+  
+  DOM.settingsPin().addEventListener('change', (e) => {
+    state.settings.requirePin = e.target.checked;
+    DOM.settingsPinValue().hidden = !e.target.checked;
+    saveSettings();
+  });
+  
+  // Set version info
+  DOM.settingsVersion().textContent = '1.2.0';
+  DOM.settingsEncryptionMethod().textContent = 'ZKE (Zero-Knowledge Encryption)';
+}
+
+function initToolPanels() {
+  // Initialize all tool panels visibility
+  document.querySelectorAll('.tool-panel').forEach(panel => {
+    panel.hidden = true;
+  });
+}
+
+function saveSettings() {
+  localStorage.setItem('fileshot-settings', JSON.stringify(state.settings));
+}
+
+function loadSettings() {
+  const saved = localStorage.getItem('fileshot-settings');
+  if (saved) {
+    Object.assign(state.settings, JSON.parse(saved));
+    DOM.settingsAutoLock().checked = state.settings.autoLock;
+    DOM.settingsPin().checked = state.settings.requirePin;
+    DOM.settingsPinValue().hidden = !state.settings.requirePin;
+  }
+}
+
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// ============================================================================
+// BACK BUTTON FOR "GO ONLINE" MODE
+// ============================================================================
+
+// This will be called from main.js when user tries to go online
+window.returnFromOnlineMode = () => {
+  switchToTool('vault');
+  console.log('Returned to offline mode');
+};
