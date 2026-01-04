@@ -87,6 +87,32 @@
         </button>
       </nav>
 
+      <!-- Sidebar File Explorer -->
+      <section class="sidebar-explorer" id="sidebarExplorer" aria-label="File Explorer">
+        <div class="explorer-header">
+          <div class="explorer-title">Explorer</div>
+          <div class="explorer-actions">
+            <button class="icon-btn" id="btnExplorerUp" title="Up">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 19V5"/>
+                <polyline points="5 12 12 5 19 12"/>
+              </svg>
+            </button>
+            <button class="icon-btn" id="btnExplorerRefresh" title="Refresh">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"/>
+                <polyline points="1 20 1 14 7 14"/>
+                <path d="M3.51 9a9 9 0 0 1 14.13-3.36L23 10"/>
+                <path d="M20.49 15a9 9 0 0 1-14.13 3.36L1 14"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="explorer-path" id="explorerPath">Loading…</div>
+        <div class="explorer-list" id="explorerList"></div>
+        <div class="explorer-hint">Drag files/folders into the app to add to Local Vault.</div>
+      </section>
+
       <div class="sidebar-footer">
         <button class="btn btn-secondary btn-full" id="btnGoOnline">
           <span>Go Online</span>
@@ -282,6 +308,20 @@
                   <span>Browser cache & cookies</span>
                 </label>
               </div>
+            </div>
+
+            <div class="shred-card">
+              <h3>Custom Targets</h3>
+              <div class="panel-actions" style="margin: 0 0 12px;">
+                <button class="btn btn-secondary" id="btnShredAddFiles" type="button">
+                  Add Files
+                </button>
+                <button class="btn btn-secondary" id="btnShredAddFolder" type="button">
+                  Add Folder
+                </button>
+              </div>
+              <div id="shredPathList" class="shred-path-list"></div>
+              <div class="hint">These will be permanently deleted using your chosen shred method.</div>
             </div>
 
             <div class="shred-card">

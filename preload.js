@@ -22,6 +22,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // File operations
   selectFile: () => ipcRenderer.invoke('select-file'),
   selectFolder: () => ipcRenderer.invoke('select-folder'),
+  saveFile: (options) => ipcRenderer.invoke('save-file', options),
+
+  // Local file explorer (read-only listings)
+  fsListDrives: () => ipcRenderer.invoke('fs-list-drives'),
+  fsListDir: (dirPath) => ipcRenderer.invoke('fs-list-dir', dirPath),
 
   // Local vault
   vaultList: () => ipcRenderer.invoke('vault-list'),
@@ -51,6 +56,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // App controls
   goOnline: () => ipcRenderer.invoke('go-online'),
   copyToClipboard: (text) => ipcRenderer.invoke('copy-to-clipboard', String(text || '')),
+
+  // Secure shred (local destructive operation)
+  shredStart: (payload, progressCb) => {
+    const requestId = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    if (typeof progressCb === 'function') {
+      ipcRenderer.on(`shred-progress:${requestId}`, (_event, msg) => {
+        try { progressCb(msg); } catch (_) {}
+      });
+    }
+    return ipcRenderer.invoke('shred-start', { ...(payload || {}), requestId });
+  },
   
   // Recent uploads
   addRecentUpload: (upload) => ipcRenderer.invoke('add-recent-upload', upload),

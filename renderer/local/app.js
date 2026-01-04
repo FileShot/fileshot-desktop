@@ -27,6 +27,11 @@ const state = {
   vaultFiles: [],
   storageUsage: { used: 0, total: 0 },
   shredProgress: { current: 0, total: 0, isRunning: false },
+  shredCustomPaths: [],
+  explorer: {
+    currentPath: null,
+    mode: 'drives' // 'drives' | 'dir'
+  },
   settings: {
     autoLock: false,
     requirePin: false
@@ -51,38 +56,49 @@ const DOM = {
   toolsContainer: () => document.querySelector('.tools-container'),
   dropZone: () => document.getElementById('dropZone'),
   dropZoneText: () => document.querySelector('.drop-zone-text'),
+  storageStatus: () => document.getElementById('storageStatus'),
   
   // Tool panels
   toolPanel: (toolName) => document.getElementById(`tool-${toolName}`),
   
   // Specific tools
-  vaultAddBtn: () => document.getElementById('addFilesBtn'),
-  vaultAddFolderBtn: () => document.getElementById('addFolderBtn'),
+  vaultAddBtn: () => document.getElementById('btnAddFiles'),
+  vaultAddFolderBtn: () => document.getElementById('btnAddFolder'),
   vaultList: () => document.getElementById('vaultList'),
-  vaultUploadBtn: () => document.getElementById('uploadVaultBtn'),
-  vaultUploadPassword: () => document.getElementById('uploadPassword'),
-  vaultUploadProtect: () => document.getElementById('protectWithPassword'),
+  vaultStatus: () => document.getElementById('vaultStatus'),
+  // Legacy upload UI (not currently present in local index.html)
+  vaultUploadBtn: () => null,
+  vaultUploadPassword: () => null,
+  vaultUploadProtect: () => null,
   
-  storageUsedValue: () => document.getElementById('storageUsedValue'),
-  storageFreeValue: () => document.getElementById('storageFreeValue'),
-  storagePercent: () => document.querySelector('.storage-percent'),
-  storageProgressFill: () => document.querySelector('.storage-progress-fill'),
-  clearVaultBtn: () => document.getElementById('clearVaultBtn'),
-  exportVaultBtn: () => document.getElementById('exportVaultBtn'),
-  fileListContainer: () => document.getElementById('fileListContainer'),
+  storageUsedValue: () => document.getElementById('storageUsed'),
+  storageFreeValue: () => document.getElementById('storageFree'),
+  clearVaultBtn: () => document.getElementById('btnClearVault'),
+  exportVaultBtn: () => document.getElementById('btnExportVault'),
+  fileListContainer: () => document.getElementById('storageFileList'),
   
-  shredMethod: () => document.querySelector('input[name="shred-method"]:checked'),
-  shredTargets: () => document.querySelectorAll('input[name="shred-target"]:checked'),
-  shredStartBtn: () => document.getElementById('startShredBtn'),
-  shredProgressSection: () => document.getElementById('shredProgressSection'),
-  shredProgressFill: () => document.querySelector('.shred-progress-fill'),
-  shredStatus: () => document.getElementById('shredStatus'),
+  shredMethod: () => document.querySelector('input[name="shredMethod"]:checked'),
+  shredStartBtn: () => document.getElementById('btnStartShred'),
+  shredAddFilesBtn: () => document.getElementById('btnShredAddFiles'),
+  shredAddFolderBtn: () => document.getElementById('btnShredAddFolder'),
+  shredPathList: () => document.getElementById('shredPathList'),
+  shredDownloads: () => document.getElementById('shredDownloads'),
+  shredTemp: () => document.getElementById('shredTemp'),
+  shredRecycleBin: () => document.getElementById('shredRecycleBin'),
+  shredBrowserCache: () => document.getElementById('shredBrowserCache'),
+  shredProgressSection: () => document.getElementById('shredProgress'),
+  shredProgressFill: () => document.getElementById('shredProgressFill'),
+  shredStatus: () => document.getElementById('shredProgressText'),
+
+  // Sidebar explorer
+  explorerPath: () => document.getElementById('explorerPath'),
+  explorerList: () => document.getElementById('explorerList'),
+  explorerUpBtn: () => document.getElementById('btnExplorerUp'),
+  explorerRefreshBtn: () => document.getElementById('btnExplorerRefresh'),
   
   settingsAutoLock: () => document.getElementById('autoLock'),
   settingsPin: () => document.getElementById('requirePin'),
-  settingsPinValue: () => document.getElementById('pinValue'),
-  settingsVersion: () => document.getElementById('versionInfo'),
-  settingsEncryptionMethod: () => document.getElementById('encryptionMethod')
+  settingsPinValue: () => null
 };
 
 function fmtBytes(n) {
@@ -110,17 +126,53 @@ window.addEventListener('DOMContentLoaded', () => {
   initStorageTool();
   initShredTool();
   initSettingsTool();
+  initExplorer();
+  initVaultSync();
   loadSettings();
-  calculateStorageUsage();
+  refreshVault();
   switchToTool('vault');
 });
+
+// ============================================================================
+// MAIN-PROCESS VAULT SYNC
+// ============================================================================
+
+function initVaultSync() {
+  if (!window.electronAPI) return;
+
+  window.electronAPI.onVaultUpdated?.(() => {
+    refreshVault();
+  });
+}
+
+async function refreshVault() {
+  if (!window.electronAPI || typeof window.electronAPI.vaultList !== 'function') {
+    // Fallback: just render current in-memory list
+    renderVaultList();
+    calculateStorageUsage();
+    return;
+  }
+
+  try {
+    const res = await window.electronAPI.vaultList();
+    state.vaultFiles = Array.isArray(res?.items) ? res.items : [];
+    state.storageUsage.used = Number(res?.totalBytes || 0);
+    renderVaultList();
+    calculateStorageUsage();
+  } catch (e) {
+    console.warn('[Vault] Failed to refresh:', e);
+    renderVaultList();
+    calculateStorageUsage();
+  }
+}
 
 // ============================================================================
 // SIDEBAR NAVIGATION
 // ============================================================================
 
 function initSidebar() {
-  DOM.btnCollapse().addEventListener('click', toggleSidebar);
+  const collapseBtn = DOM.btnCollapse();
+  if (collapseBtn) collapseBtn.addEventListener('click', toggleSidebar);
 
   // Hide unfinished tools to avoid placeholders
   ['pdf', 'image', 'text'].forEach(tool => {
@@ -154,7 +206,8 @@ function initGoOnline() {
 
 function toggleSidebar() {
   state.sidebarCollapsed = !state.sidebarCollapsed;
-  DOM.sidebar().classList.toggle('collapsed', state.sidebarCollapsed);
+  const sidebar = DOM.sidebar();
+  if (sidebar) sidebar.classList.toggle('collapsed', state.sidebarCollapsed);
 }
 
 function switchToTool(toolName) {
@@ -188,7 +241,8 @@ function switchToTool(toolName) {
     settings: '<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6M4.2 4.2l4.2 4.2m5.6 5.6l4.2 4.2M1 12h6m6 0h6M4.2 19.8l4.2-4.2m5.6-5.6l4.2-4.2"/></svg> Settings'
   };
   
-  DOM.topbarLeft().innerHTML = `<h1>${titles[toolName]}</h1>`;
+  const topbar = DOM.topbarLeft();
+  if (topbar) topbar.innerHTML = `<h1>${titles[toolName]}</h1>`;
 }
 
 // ============================================================================
@@ -199,6 +253,8 @@ let dragCounter = 0;
 
 function initDropZone() {
   const dropZone = DOM.dropZone();
+
+  if (!dropZone) return;
   
   // Ensure drop zone is hidden on init
   dropZone.hidden = true;
@@ -236,18 +292,33 @@ function handleFileDrop(e) {
   
   // Reset drag counter and hide drop zone
   dragCounter = 0;
-  DOM.dropZone().hidden = true;
+  const dz = DOM.dropZone();
+  if (dz) dz.hidden = true;
   
+  // 1) OS-level drop (File objects)
   const files = e.dataTransfer?.files;
-  if (!files || files.length === 0) return;
-  
-  // Switch to vault tool
+  if (files && files.length > 0) {
+    const paths = Array.from(files)
+      .map(f => f && (f.path || f.name))
+      .filter(Boolean);
+    if (paths.length) {
+      switchToTool('vault');
+      addPathsToVault(paths);
+    }
+    return;
+  }
+
+  // 2) In-app drag from sidebar explorer
+  const kind = e.dataTransfer?.getData('application/x-fileshot-kind');
+  const p = e.dataTransfer?.getData('application/x-fileshot-path') || e.dataTransfer?.getData('text/plain');
+  if (!p) return;
+
   switchToTool('vault');
-  
-  // Add files to vault
-  Array.from(files).forEach(file => {
-    addFileToVault(file);
-  });
+  if (kind === 'dir') {
+    addFolderToVault(p);
+  } else {
+    addPathsToVault([p]);
+  }
 }
 
 // ============================================================================
@@ -255,50 +326,67 @@ function handleFileDrop(e) {
 // ============================================================================
 
 function initVaultTool() {
-  DOM.vaultAddBtn().addEventListener('click', pickFiles);
-  DOM.vaultAddFolderBtn().addEventListener('click', pickFolder);
-  DOM.vaultUploadBtn().addEventListener('click', uploadVault);
-  DOM.vaultUploadProtect().addEventListener('change', togglePasswordField);
+  const addBtn = DOM.vaultAddBtn();
+  const addFolderBtn = DOM.vaultAddFolderBtn();
+  if (addBtn) addBtn.addEventListener('click', pickFiles);
+  if (addFolderBtn) addFolderBtn.addEventListener('click', pickFolder);
 }
 
 function pickFiles() {
   // In Electron, trigger file picker through main process
-  if (window.electronAPI && window.electronAPI.pickFiles) {
-    window.electronAPI.pickFiles().then(filePaths => {
-      filePaths.forEach(filePath => {
-        addFileToVault({ path: filePath, name: filePath.split(/[/\\]/).pop() });
-      });
-    });
-  }
+  if (!window.electronAPI || typeof window.electronAPI.selectFile !== 'function') return;
+  window.electronAPI.selectFile().then(filePaths => {
+    const paths = Array.isArray(filePaths) ? filePaths : [];
+    if (paths.length) addPathsToVault(paths);
+  });
 }
 
 function pickFolder() {
-  if (window.electronAPI && window.electronAPI.pickFolder) {
-    window.electronAPI.pickFolder().then(folderPath => {
-      if (folderPath) {
-        addFileToVault({ path: folderPath, name: folderPath.split(/[/\\]/).pop(), isFolder: true });
-      }
+  if (!window.electronAPI || typeof window.electronAPI.selectFolder !== 'function') return;
+  window.electronAPI.selectFolder().then(folderPaths => {
+    const folderPath = Array.isArray(folderPaths) ? folderPaths[0] : null;
+    if (folderPath) addFolderToVault(folderPath);
+  });
+}
+
+async function addPathsToVault(paths) {
+  if (!window.electronAPI || typeof window.electronAPI.vaultAdd !== 'function') {
+    // Fallback: keep renderer-only list (best-effort)
+    (paths || []).forEach((p) => {
+      state.vaultFiles.push({
+        id: Math.random().toString(36).slice(2),
+        name: String(p).split(/[/\\]/).pop(),
+        size: 0,
+        addedAt: Date.now(),
+        localPath: String(p),
+        sourcePath: String(p)
+      });
     });
+    renderVaultList();
+    calculateStorageUsage();
+    return;
+  }
+
+  try {
+    await window.electronAPI.vaultAdd(paths);
+  } finally {
+    refreshVault();
   }
 }
 
-function addFileToVault(file) {
-  const fileInfo = {
-    id: Math.random().toString(36).substr(2, 9),
-    name: file.name || file.path?.split(/[/\\]/).pop(),
-    path: file.path || file.name,
-    size: file.size || 0,
-    isFolder: file.isFolder || false,
-    addedAt: new Date().toLocaleString()
-  };
-  
-  state.vaultFiles.push(fileInfo);
-  renderVaultList();
-  calculateStorageUsage();
+async function addFolderToVault(folderPath) {
+  if (!window.electronAPI || typeof window.electronAPI.vaultAddFolder !== 'function') return;
+  try {
+    await window.electronAPI.vaultAddFolder(folderPath);
+  } finally {
+    refreshVault();
+  }
 }
 
 function renderVaultList() {
   const vaultList = DOM.vaultList();
+
+  if (!vaultList) return;
   
   if (state.vaultFiles.length === 0) {
     vaultList.innerHTML = `
@@ -312,28 +400,42 @@ function renderVaultList() {
     `;
     return;
   }
-  
-  vaultList.innerHTML = state.vaultFiles.map(file => `
+
+  vaultList.innerHTML = state.vaultFiles.map(file => {
+    const addedAt = file.addedAt ? new Date(file.addedAt).toLocaleString() : '';
+    const metaBits = [];
+    if (typeof file.size === 'number') metaBits.push(fmtBytes(file.size));
+    if (addedAt) metaBits.push(`Added: ${addedAt}`);
+    return `
     <div class="vault-item">
       <div class="vault-item-info">
-        <div class="name">${file.isFolder ? '📁' : '📄'} ${escapeHtml(file.name)}</div>
-        <div class="meta">Added: ${file.addedAt}</div>
+        <div class="name">📄 ${escapeHtml(file.name || '')}</div>
+        <div class="meta">${escapeHtml(metaBits.join(' • '))}</div>
       </div>
       <div class="vault-item-buttons">
-        <button class="btn" onclick="removeFileFromVault('${file.id}')">Remove</button>
+        <button class="btn" onclick="window.removeVaultItem('${String(file.id)}')">Remove</button>
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
-function removeFileFromVault(fileId) {
-  state.vaultFiles = state.vaultFiles.filter(f => f.id !== fileId);
-  renderVaultList();
-  calculateStorageUsage();
-}
+window.removeVaultItem = async (fileId) => {
+  const id = String(fileId || '');
+  if (!id) return;
+  if (!window.electronAPI || typeof window.electronAPI.vaultRemove !== 'function') return;
+  try {
+    await window.electronAPI.vaultRemove(id);
+  } finally {
+    refreshVault();
+  }
+};
 
 function togglePasswordField() {
-  DOM.vaultUploadPassword().hidden = !DOM.vaultUploadProtect().checked;
+  const pw = DOM.vaultUploadPassword();
+  const protect = DOM.vaultUploadProtect();
+  if (!pw || !protect) return;
+  pw.hidden = !protect.checked;
 }
 
 async function uploadVault() {
@@ -342,8 +444,10 @@ async function uploadVault() {
     return;
   }
   
-  const protect = DOM.vaultUploadProtect().checked;
-  const password = protect ? DOM.vaultUploadPassword().value : null;
+  const protectEl = DOM.vaultUploadProtect();
+  const pwEl = DOM.vaultUploadPassword();
+  const protect = Boolean(protectEl?.checked);
+  const password = protect ? (pwEl?.value || null) : null;
   
   if (protect && !password) {
     alert('Enter a password');
@@ -373,32 +477,27 @@ async function uploadVault() {
 // ============================================================================
 
 function initStorageTool() {
-  DOM.clearVaultBtn().addEventListener('click', clearVault);
-  DOM.exportVaultBtn().addEventListener('click', exportVault);
+  const clearBtn = DOM.clearVaultBtn();
+  const exportBtn = DOM.exportVaultBtn();
+  if (clearBtn) clearBtn.addEventListener('click', clearVault);
+  if (exportBtn) exportBtn.addEventListener('click', exportVault);
 }
 
 function calculateStorageUsage() {
-  let totalSize = 0;
-  state.vaultFiles.forEach(file => {
-    totalSize += file.size || 0;
-  });
-  
-  state.storageUsage.used = totalSize;
-  // Assume 1GB total for demo (could be system storage)
-  state.storageUsage.total = 1024 * 1024 * 1024;
-  
-  const percent = Math.round((state.storageUsage.used / state.storageUsage.total) * 100);
-  
-  DOM.storageUsedValue().textContent = fmtBytes(state.storageUsage.used);
-  DOM.storageFreeValue().textContent = fmtBytes(state.storageUsage.total - state.storageUsage.used);
-  DOM.storagePercent().textContent = `${percent}%`;
-  DOM.storageProgressFill().style.width = `${percent}%`;
-  
+  // Used is driven by main-process vaultList() when available.
+  if (DOM.storageUsedValue()) DOM.storageUsedValue().textContent = fmtBytes(state.storageUsage.used);
+  if (DOM.storageFreeValue()) DOM.storageFreeValue().textContent = '—';
+
+  const badge = DOM.storageStatus();
+  if (badge) badge.textContent = `${state.vaultFiles.length} item(s) • ${fmtBytes(state.storageUsage.used)}`;
+
   renderFileList();
 }
 
 function renderFileList() {
   const container = DOM.fileListContainer();
+
+  if (!container) return;
   
   if (state.vaultFiles.length === 0) {
     container.innerHTML = '<div style="color: var(--text-secondary); text-align: center; padding: 24px;">No files in vault</div>';
@@ -416,26 +515,18 @@ function renderFileList() {
 }
 
 function clearVault() {
-  if (confirm('Delete all files from vault? This cannot be undone.')) {
-    state.vaultFiles = [];
-    renderVaultList();
-    calculateStorageUsage();
-  }
+  if (!confirm('Delete all files from vault? This cannot be undone.')) return;
+  if (!window.electronAPI || typeof window.electronAPI.vaultRemove !== 'function') return;
+
+  // Remove items one-by-one (small vaults are expected). If you want bulk delete later,
+  // add a dedicated IPC handler in main.
+  const ids = state.vaultFiles.map(it => String(it.id)).filter(Boolean);
+  Promise.allSettled(ids.map(id => window.electronAPI.vaultRemove(id)))
+    .finally(() => refreshVault());
 }
 
 function exportVault() {
-  if (state.vaultFiles.length === 0) {
-    alert('No files to export');
-    return;
-  }
-  
-  if (window.electronAPI && window.electronAPI.exportVault) {
-    window.electronAPI.exportVault(state.vaultFiles).then(() => {
-      alert('Vault exported successfully');
-    }).catch(err => {
-      alert(`Export failed: ${err.message}`);
-    });
-  }
+  alert('Export Vault is not wired up yet. (Next step: add a main-process vault-export handler that creates an encrypted backup.)');
 }
 
 // ============================================================================
@@ -443,56 +534,158 @@ function exportVault() {
 // ============================================================================
 
 function initShredTool() {
-  DOM.shredStartBtn().addEventListener('click', startShredding);
+  const btn = DOM.shredStartBtn();
+  if (btn) btn.addEventListener('click', startShredding);
+
+  const addFilesBtn = DOM.shredAddFilesBtn();
+  const addFolderBtn = DOM.shredAddFolderBtn();
+  if (addFilesBtn) addFilesBtn.addEventListener('click', addShredFiles);
+  if (addFolderBtn) addFolderBtn.addEventListener('click', addShredFolder);
+
+  renderShredPaths();
+}
+
+function addUniqueShredPaths(newPaths) {
+  const existing = new Set(state.shredCustomPaths.map(p => String(p)));
+  for (const p of (newPaths || [])) {
+    const s = String(p || '').trim();
+    if (!s) continue;
+    if (!existing.has(s)) {
+      existing.add(s);
+      state.shredCustomPaths.push(s);
+    }
+  }
+  renderShredPaths();
+}
+
+function renderShredPaths() {
+  const box = DOM.shredPathList();
+  if (!box) return;
+
+  if (!state.shredCustomPaths.length) {
+    box.innerHTML = '<div class="hint" style="margin:0;">No custom targets selected.</div>';
+    return;
+  }
+
+  box.innerHTML = state.shredCustomPaths.map((p, idx) => `
+    <div class="shred-path-item">
+      <div class="path" title="${escapeHtml(p)}">${escapeHtml(p)}</div>
+      <button class="remove" type="button" onclick="window.removeShredPath(${idx})">Remove</button>
+    </div>
+  `).join('');
+}
+
+window.removeShredPath = (idx) => {
+  const i = Number(idx);
+  if (!Number.isFinite(i)) return;
+  state.shredCustomPaths.splice(i, 1);
+  renderShredPaths();
+};
+
+function addShredFiles() {
+  if (!window.electronAPI || typeof window.electronAPI.selectFile !== 'function') return;
+  window.electronAPI.selectFile().then((paths) => {
+    addUniqueShredPaths(Array.isArray(paths) ? paths : []);
+  });
+}
+
+function addShredFolder() {
+  if (!window.electronAPI || typeof window.electronAPI.selectFolder !== 'function') return;
+  window.electronAPI.selectFolder().then((paths) => {
+    const p = Array.isArray(paths) ? paths[0] : null;
+    if (p) addUniqueShredPaths([p]);
+  });
 }
 
 function startShredding() {
-  const method = DOM.shredMethod().value;
-  const targets = Array.from(DOM.shredTargets()).map(t => t.value);
+  const methodEl = DOM.shredMethod();
+  const method = methodEl ? methodEl.value : 'dod';
+  const targets = [];
+  if (DOM.shredDownloads()?.checked) targets.push('downloads');
+  if (DOM.shredTemp()?.checked) targets.push('temp');
+  if (DOM.shredRecycleBin()?.checked) targets.push('recycle');
+  if (DOM.shredBrowserCache()?.checked) targets.push('browser');
   
-  if (targets.length === 0) {
-    alert('Select at least one target location');
+  const customPaths = state.shredCustomPaths.slice();
+  if (targets.length === 0 && customPaths.length === 0) {
+    alert('Select at least one target location or add a custom target.');
     return;
   }
+
+  const ok = confirm('This will permanently delete selected data. Continue?');
+  if (!ok) return;
   
   // Show progress section
-  DOM.shredProgressSection().hidden = false;
+  const prog = DOM.shredProgressSection();
+  if (prog) prog.hidden = false;
   state.shredProgress.isRunning = true;
   state.shredProgress.current = 0;
   state.shredProgress.total = 100;
   
-  // Simulate shredding process
+  // Prefer main-process shred engine when available
+  if (window.electronAPI && typeof window.electronAPI.shredStart === 'function') {
+    const statusEl = DOM.shredStatus();
+    if (statusEl) statusEl.textContent = 'Initializing…';
+
+    window.electronAPI.shredStart({ method, targets, paths: customPaths }, (msg) => {
+      if (!msg || typeof msg !== 'object') return;
+      if (typeof msg.percent === 'number') {
+        state.shredProgress.current = Math.max(0, Math.min(100, msg.percent));
+        state.shredProgress.total = 100;
+        updateShredProgress();
+      }
+      if (statusEl && msg.message) statusEl.textContent = String(msg.message);
+    }).then((result) => {
+      state.shredProgress.current = 100;
+      state.shredProgress.total = 100;
+      updateShredProgress();
+      state.shredProgress.isRunning = false;
+
+      const ok = result && result.success;
+      if (statusEl) {
+        if (ok) {
+          statusEl.innerHTML = `<div style="color: var(--ok);">✓ Shredding complete!</div>`;
+        } else {
+          statusEl.innerHTML = `<div style="color: #ef4444;">Shredding finished with errors.</div>`;
+        }
+      }
+    }).catch((err) => {
+      state.shredProgress.isRunning = false;
+      const statusEl = DOM.shredStatus();
+      if (statusEl) statusEl.textContent = `Error: ${err && err.message ? err.message : String(err)}`;
+    }).finally(() => {
+      setTimeout(() => {
+        if (prog) prog.hidden = true;
+        const statusEl2 = DOM.shredStatus();
+        if (statusEl2) statusEl2.textContent = '';
+      }, 3000);
+    });
+
+    return;
+  }
+
+  // Fallback simulation (non-destructive)
   const interval = setInterval(() => {
     state.shredProgress.current += Math.random() * 25;
-    
     if (state.shredProgress.current >= state.shredProgress.total) {
       state.shredProgress.current = state.shredProgress.total;
       clearInterval(interval);
       state.shredProgress.isRunning = false;
-      
-      DOM.shredStatus().innerHTML = `
-        <div style="color: var(--ok);">✓ Shredding complete!</div>
-        <div style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">
-          Method: <strong>${method}</strong><br>
-          Targets: <strong>${targets.join(', ')}</strong><br>
-          Files securely wiped with multiple passes
-        </div>
-      `;
-      
-      // Reset button after 3s
+      const statusEl = DOM.shredStatus();
+      if (statusEl) statusEl.textContent = '✓ Shredding complete (simulated).';
       setTimeout(() => {
-        DOM.shredProgressSection().hidden = true;
-        DOM.shredStatus().innerHTML = '';
+        if (prog) prog.hidden = true;
+        if (statusEl) statusEl.textContent = '';
       }, 3000);
     }
-    
     updateShredProgress();
   }, 300);
 }
 
 function updateShredProgress() {
   const percent = Math.round((state.shredProgress.current / state.shredProgress.total) * 100);
-  DOM.shredProgressFill().style.width = `${percent}%`;
+  const fill = DOM.shredProgressFill();
+  if (fill) fill.style.width = `${percent}%`;
 }
 
 // ============================================================================
@@ -500,20 +693,17 @@ function updateShredProgress() {
 // ============================================================================
 
 function initSettingsTool() {
-  DOM.settingsAutoLock().addEventListener('change', (e) => {
+  const autoLock = DOM.settingsAutoLock();
+  const pin = DOM.settingsPin();
+  if (autoLock) autoLock.addEventListener('change', (e) => {
     state.settings.autoLock = e.target.checked;
     saveSettings();
   });
-  
-  DOM.settingsPin().addEventListener('change', (e) => {
+
+  if (pin) pin.addEventListener('change', (e) => {
     state.settings.requirePin = e.target.checked;
-    DOM.settingsPinValue().hidden = !e.target.checked;
     saveSettings();
   });
-  
-  // Set version info
-  DOM.settingsVersion().textContent = '1.2.0';
-  DOM.settingsEncryptionMethod().textContent = 'ZKE (Zero-Knowledge Encryption)';
 }
 
 function initToolPanels() {
@@ -531,9 +721,8 @@ function loadSettings() {
   const saved = localStorage.getItem('fileshot-settings');
   if (saved) {
     Object.assign(state.settings, JSON.parse(saved));
-    DOM.settingsAutoLock().checked = state.settings.autoLock;
-    DOM.settingsPin().checked = state.settings.requirePin;
-    DOM.settingsPinValue().hidden = !state.settings.requirePin;
+    if (DOM.settingsAutoLock()) DOM.settingsAutoLock().checked = state.settings.autoLock;
+    if (DOM.settingsPin()) DOM.settingsPin().checked = state.settings.requirePin;
   }
 }
 
@@ -545,6 +734,176 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// ============================================================================
+// SIDEBAR FILE EXPLORER
+// ============================================================================
+
+function initExplorer() {
+  const list = DOM.explorerList();
+  const upBtn = DOM.explorerUpBtn();
+  const refreshBtn = DOM.explorerRefreshBtn();
+
+  if (!list) return;
+
+  if (upBtn) upBtn.addEventListener('click', () => explorerUp());
+  if (refreshBtn) refreshBtn.addEventListener('click', () => explorerRefresh());
+
+  explorerShowDrives();
+}
+
+function setExplorerPathLabel(text) {
+  const el = DOM.explorerPath();
+  if (el) el.textContent = String(text || '');
+}
+
+async function explorerShowDrives() {
+  state.explorer.mode = 'drives';
+  state.explorer.currentPath = null;
+  setExplorerPathLabel('This PC');
+
+  const list = DOM.explorerList();
+  if (!list) return;
+
+  if (!window.electronAPI || typeof window.electronAPI.fsListDrives !== 'function') {
+    list.innerHTML = '<div class="explorer-item"><div></div><div class="name">Explorer unavailable</div><div></div></div>';
+    return;
+  }
+
+  const drives = await window.electronAPI.fsListDrives();
+  const items = Array.isArray(drives) ? drives : [];
+  list.innerHTML = items.map((d) => {
+    const p = String(d.path || d.name || '');
+    return `
+      <div class="explorer-item" draggable="false" data-kind="dir" data-path="${escapeHtml(p)}">
+        <div class="meta">🖴</div>
+        <div class="name" title="${escapeHtml(p)}">${escapeHtml(d.name || p)}</div>
+        <button class="add" type="button" data-action="open">Open</button>
+      </div>
+    `;
+  }).join('') || '<div class="explorer-item"><div></div><div class="name">No drives found</div><div></div></div>';
+
+  list.querySelectorAll('.explorer-item').forEach((row) => {
+    row.addEventListener('dblclick', () => explorerOpen(row.dataset.path));
+  });
+  list.querySelectorAll('button[data-action="open"]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const row = e.currentTarget.closest('.explorer-item');
+      explorerOpen(row?.dataset?.path);
+    });
+  });
+}
+
+function explorerParentPath(p) {
+  const s = String(p || '').trim();
+  if (!s) return null;
+
+  // Windows root like C:\
+  if (/^[A-Z]:\\?$/i.test(s.replace(/\\+$/, '') + '\\')) return null;
+
+  // Normalize separators for parent calc
+  const isWin = s.includes('\\');
+  const sep = isWin ? '\\' : '/';
+  let t = s;
+  // Remove trailing separator
+  while (t.length > 1 && t.endsWith(sep)) t = t.slice(0, -1);
+  const idx = t.lastIndexOf(sep);
+  if (idx <= 0) return isWin ? null : '/';
+  return t.slice(0, idx + 1);
+}
+
+async function explorerOpen(dirPath) {
+  const p = String(dirPath || '').trim();
+  if (!p) return;
+
+  if (!window.electronAPI || typeof window.electronAPI.fsListDir !== 'function') {
+    const list = DOM.explorerList();
+    if (list) list.innerHTML = '<div class="explorer-item"><div></div><div class="name">Explorer unavailable</div><div></div></div>';
+    return;
+  }
+
+  state.explorer.mode = 'dir';
+  state.explorer.currentPath = p;
+  setExplorerPathLabel(p);
+
+  const list = DOM.explorerList();
+  if (!list) return;
+
+  list.innerHTML = '<div class="explorer-item"><div></div><div class="name">Loading…</div><div></div></div>';
+
+  const res = await window.electronAPI.fsListDir(p);
+  const entries = Array.isArray(res?.entries) ? res.entries : [];
+  if (res?.error) {
+    list.innerHTML = `<div class="explorer-item"><div></div><div class="name">${escapeHtml(res.error)}</div><div></div></div>`;
+    return;
+  }
+
+  list.innerHTML = entries.map((ent) => {
+    const kind = ent.isDir ? 'dir' : 'file';
+    const icon = ent.isDir ? '📁' : '📄';
+    const name = ent.name || ent.path;
+    const p2 = String(ent.path || '');
+    const btn = ent.isDir ? '<button class="add" type="button" data-action="open">Open</button>' : '<button class="add" type="button" data-action="add">Add</button>';
+    return `
+      <div class="explorer-item" draggable="true" data-kind="${kind}" data-path="${escapeHtml(p2)}" title="${escapeHtml(p2)}">
+        <div class="meta">${icon}</div>
+        <div class="name">${escapeHtml(name)}</div>
+        ${btn}
+      </div>
+    `;
+  }).join('') || '<div class="explorer-item"><div></div><div class="name">(Empty)</div><div></div></div>';
+
+  list.querySelectorAll('.explorer-item').forEach((row) => {
+    row.addEventListener('dragstart', (e) => {
+      const p2 = row.dataset.path;
+      const kind = row.dataset.kind;
+      if (!p2) return;
+      e.dataTransfer?.setData('application/x-fileshot-path', p2);
+      e.dataTransfer?.setData('application/x-fileshot-kind', kind || 'file');
+      e.dataTransfer?.setData('text/plain', p2);
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copy';
+    });
+    row.addEventListener('dblclick', () => {
+      if (row.dataset.kind === 'dir') explorerOpen(row.dataset.path);
+      else addPathsToVault([row.dataset.path]);
+    });
+  });
+
+  list.querySelectorAll('button[data-action="open"]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const row = e.currentTarget.closest('.explorer-item');
+      explorerOpen(row?.dataset?.path);
+    });
+  });
+  list.querySelectorAll('button[data-action="add"]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const row = e.currentTarget.closest('.explorer-item');
+      const p2 = row?.dataset?.path;
+      if (p2) addPathsToVault([p2]);
+    });
+  });
+}
+
+function explorerUp() {
+  if (state.explorer.mode !== 'dir' || !state.explorer.currentPath) {
+    explorerShowDrives();
+    return;
+  }
+  const parent = explorerParentPath(state.explorer.currentPath);
+  if (!parent) {
+    explorerShowDrives();
+    return;
+  }
+  explorerOpen(parent);
+}
+
+function explorerRefresh() {
+  if (state.explorer.mode === 'dir' && state.explorer.currentPath) {
+    explorerOpen(state.explorer.currentPath);
+  } else {
+    explorerShowDrives();
+  }
 }
 
 // ============================================================================

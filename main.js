@@ -1,6 +1,7 @@
 const { app, BrowserWindow, Tray, Menu, ipcMain, dialog, shell, nativeImage, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const crypto = require('crypto');
 const axios = require('axios');
 const FormData = require('form-data');
@@ -91,6 +92,181 @@ function addFileToVault(sourcePath) {
 
 function vaultTotalBytes(items) {
   return (items || []).reduce((sum, it) => sum + Number(it.size || 0), 0);
+}
+
+// ============================================================================
+// SECURE SHRED (BEST-EFFORT)
+// ============================================================================
+
+function shredPassesForMethod(method) {
+  const m = String(method || '').toLowerCase();
+  if (m === 'gutmann') return 35;
+  if (m === 'dod') return 7;
+  if (m === 'simple' || m === 'single') return 1;
+  return 1;
+}
+
+function isProbablyDir(p) {
+  try {
+    const st = fs.statSync(p);
+    return st.isDirectory();
+  } catch (_) {
+    return false;
+  }
+}
+
+async function listFilesRecursive(rootPath, fileList = []) {
+  const p = String(rootPath || '');
+  if (!p) return fileList;
+  let ents;
+  try {
+    ents = await fs.promises.readdir(p, { withFileTypes: true });
+  } catch (_) {
+    return fileList;
+  }
+
+  for (const ent of ents) {
+    const full = path.join(p, ent.name);
+    try {
+      if (ent.isDirectory()) {
+        await listFilesRecursive(full, fileList);
+      } else if (ent.isFile()) {
+        fileList.push(full);
+      }
+      // Skip symlinks and others
+    } catch (_) {}
+  }
+  return fileList;
+}
+
+async function tryRemoveEmptyDirs(rootPath) {
+  const p = String(rootPath || '');
+  if (!p) return;
+  let ents;
+  try {
+    ents = await fs.promises.readdir(p, { withFileTypes: true });
+  } catch (_) {
+    return;
+  }
+
+  for (const ent of ents) {
+    if (!ent.isDirectory()) continue;
+    const full = path.join(p, ent.name);
+    await tryRemoveEmptyDirs(full);
+  }
+
+  // Now try removing this dir if empty
+  try {
+    const left = await fs.promises.readdir(p);
+    if (left.length === 0) {
+      await fs.promises.rmdir(p);
+    }
+  } catch (_) {}
+}
+
+async function overwriteAndDeleteFile(filePath, passes, onProgress) {
+  const p = String(filePath || '');
+  if (!p) return;
+
+  let st;
+  try {
+    st = await fs.promises.stat(p);
+  } catch (e) {
+    throw new Error(`Missing file: ${p}`);
+  }
+  if (!st.isFile()) return;
+
+  // Rename before wipe (best-effort)
+  let workPath = p;
+  try {
+    const dir = path.dirname(p);
+    const rnd = crypto.randomBytes(12).toString('hex');
+    const renamed = path.join(dir, rnd);
+    await fs.promises.rename(p, renamed);
+    workPath = renamed;
+  } catch (_) {}
+
+  if (passes <= 0) {
+    await fs.promises.unlink(workPath);
+    return;
+  }
+
+  const size = Number(st.size || 0);
+  const chunkSize = 1024 * 1024; // 1MB
+  const buf = Buffer.allocUnsafe(chunkSize);
+
+  const fh = await fs.promises.open(workPath, 'r+');
+  try {
+    for (let pass = 1; pass <= passes; pass++) {
+      let offset = 0;
+      while (offset < size) {
+        const len = Math.min(chunkSize, size - offset);
+        crypto.randomFillSync(buf, 0, len);
+        await fh.write(buf, 0, len, offset);
+        offset += len;
+      }
+      try { await fh.sync(); } catch (_) {}
+      if (typeof onProgress === 'function') {
+        onProgress({ pass, passes });
+      }
+    }
+  } finally {
+    try { await fh.close(); } catch (_) {}
+  }
+
+  try { await fs.promises.truncate(workPath, 0); } catch (_) {}
+  await fs.promises.unlink(workPath);
+}
+
+function resolveSpecialTargetPaths(targets) {
+  const t = Array.isArray(targets) ? targets.map(String) : [];
+  const out = [];
+  const platform = process.platform;
+
+  if (t.includes('downloads')) {
+    try { out.push(app.getPath('downloads')); } catch (_) {}
+  }
+  if (t.includes('temp')) {
+    try { out.push(app.getPath('temp')); } catch (_) { out.push(os.tmpdir()); }
+  }
+  if (t.includes('recycle')) {
+    if (platform === 'win32') {
+      // Best-effort: common recycle bin folder (permissions may block)
+      out.push('C:\\$Recycle.Bin');
+    } else if (platform === 'darwin') {
+      out.push(path.join(os.homedir(), '.Trash'));
+    } else {
+      out.push(path.join(os.homedir(), '.local', 'share', 'Trash', 'files'));
+    }
+  }
+  if (t.includes('browser')) {
+    // Best-effort cache locations. Often locked; failures are reported.
+    if (platform === 'win32') {
+      const local = process.env.LOCALAPPDATA || '';
+      if (local) {
+        out.push(path.join(local, 'Google', 'Chrome', 'User Data', 'Default', 'Cache'));
+        out.push(path.join(local, 'Microsoft', 'Edge', 'User Data', 'Default', 'Cache'));
+      }
+    } else if (platform === 'darwin') {
+      out.push(path.join(os.homedir(), 'Library', 'Caches', 'Google', 'Chrome'));
+      out.push(path.join(os.homedir(), 'Library', 'Caches', 'Microsoft Edge'));
+    } else {
+      out.push(path.join(os.homedir(), '.cache', 'google-chrome'));
+      out.push(path.join(os.homedir(), '.cache', 'chromium'));
+    }
+  }
+
+  // Deduplicate + keep existing
+  const seen = new Set();
+  const cleaned = [];
+  for (const p of out) {
+    const s = String(p || '').trim();
+    if (!s) continue;
+    if (seen.has(s)) continue;
+    seen.add(s);
+    cleaned.push(s);
+  }
+  return cleaned;
 }
 
 function hasBundledFrontend() {
@@ -211,7 +387,7 @@ function createWindow() {
       const u = new URL(url);
       const isFileShot = u.hostname === 'fileshot.io' || u.hostname === 'www.fileshot.io';
       if (isFileShot && mainWindow) {
-        loadFrontend({ preferredPath: u.pathname + u.search + u.hash, reason: 'same-window navigation' }).catch(() => {});
+        loadFrontendFallback({ preferredPath: u.pathname + u.search + u.hash, reason: 'same-window navigation' }).catch(() => {});
         return { action: 'deny' };
       }
     } catch (_) {}
@@ -570,14 +746,168 @@ ipcMain.handle('select-folder', async () => {
   return result.filePaths;
 });
 
+ipcMain.handle('save-file', async (_event, options) => {
+  const opts = options && typeof options === 'object' ? options : {};
+  const result = await dialog.showSaveDialog({
+    title: opts.title || 'Save File',
+    defaultPath: opts.defaultPath,
+    filters: Array.isArray(opts.filters) ? opts.filters : undefined
+  });
+  return { canceled: result.canceled, filePath: result.filePath };
+});
+
+ipcMain.handle('fs-list-drives', async () => {
+  // Cross-platform “roots” list.
+  // Windows: return common drive letters when possible.
+  // macOS/Linux: return '/'
+  const platform = process.platform;
+
+  if (platform !== 'win32') {
+    return [{ name: '/', path: '/' }];
+  }
+
+  // Windows: probe common drive letters quickly without shelling out
+  const drives = [];
+  for (let c = 67; c <= 90; c++) { // C..Z
+    const letter = String.fromCharCode(c);
+    const p = `${letter}:\\`;
+    try {
+      if (fs.existsSync(p)) drives.push({ name: p, path: p });
+    } catch (_) {}
+  }
+  return drives.length ? drives : [{ name: 'C:\\', path: 'C:\\' }];
+});
+
+ipcMain.handle('fs-list-dir', async (_event, dirPath) => {
+  const p = String(dirPath || '');
+  if (!p) return { path: p, entries: [] };
+
+  try {
+    const entries = await fs.promises.readdir(p, { withFileTypes: true });
+    const mapped = [];
+    for (const ent of entries) {
+      const full = path.join(p, ent.name);
+      mapped.push({
+        name: ent.name,
+        path: full,
+        isDir: ent.isDirectory(),
+        isFile: ent.isFile()
+      });
+    }
+
+    // Sort directories first, then files, then alpha
+    mapped.sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    return { path: p, entries: mapped };
+  } catch (e) {
+    return { path: p, entries: [], error: e && e.message ? e.message : String(e) };
+  }
+});
+
 ipcMain.handle('copy-to-clipboard', async (_event, text) => {
   clipboard.writeText(String(text || ''));
   return { success: true };
 });
 
+function sendShredProgress(event, requestId, msg) {
+  if (!requestId) return;
+  try {
+    event.sender.send(`shred-progress:${requestId}`, msg);
+  } catch (_) {}
+}
+
+ipcMain.handle('shred-start', async (event, payload) => {
+  const req = payload && typeof payload === 'object' ? payload : {};
+  const requestId = String(req.requestId || '');
+  const method = String(req.method || 'simple');
+  const passes = shredPassesForMethod(method);
+
+  const targets = Array.isArray(req.targets) ? req.targets.map(String) : [];
+  const customPaths = Array.isArray(req.paths) ? req.paths.map(String) : [];
+
+  const targetPaths = resolveSpecialTargetPaths(targets);
+  const allRoots = [...customPaths, ...targetPaths]
+    .map((p) => String(p || '').trim())
+    .filter(Boolean);
+
+  if (!allRoots.length) {
+    return { success: false, error: 'No targets specified' };
+  }
+
+  // Expand directories to files, keep file targets as-is.
+  const files = [];
+  const dirs = [];
+  for (const p of allRoots) {
+    try {
+      const st = await fs.promises.stat(p);
+      if (st.isDirectory()) dirs.push(p);
+      else if (st.isFile()) files.push(p);
+    } catch (_) {
+      // Missing targets are ignored but reported
+    }
+  }
+
+  for (const d of dirs) {
+    await listFilesRecursive(d, files);
+  }
+
+  // Deduplicate files
+  const uniq = [];
+  const seen = new Set();
+  for (const f of files) {
+    if (!f) continue;
+    const key = String(f);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniq.push(key);
+  }
+
+  const total = uniq.length;
+  const errors = [];
+
+  sendShredProgress(event, requestId, { percent: 0, message: `Preparing… (${total} file(s))` });
+
+  let done = 0;
+  for (const f of uniq) {
+    try {
+      sendShredProgress(event, requestId, {
+        percent: total ? Math.round((done / total) * 100) : 0,
+        message: `Shredding: ${f}`
+      });
+
+      await overwriteAndDeleteFile(f, passes, ({ pass, passes: pcount }) => {
+        sendShredProgress(event, requestId, {
+          percent: total ? Math.round((done / total) * 100) : 0,
+          message: `Wipe pass ${pass}/${pcount}: ${path.basename(f)}`
+        });
+      });
+    } catch (e) {
+      errors.push({ path: f, error: e && e.message ? e.message : String(e) });
+    }
+    done++;
+    sendShredProgress(event, requestId, {
+      percent: total ? Math.round((done / total) * 100) : 100,
+      message: `Progress: ${done}/${total}`
+    });
+  }
+
+  // Best-effort cleanup of emptied directories
+  for (const d of dirs) {
+    try { await tryRemoveEmptyDirs(d); } catch (_) {}
+  }
+
+  const success = errors.length === 0;
+  sendShredProgress(event, requestId, { percent: 100, message: success ? 'Complete' : `Complete with ${errors.length} error(s)` });
+
+  return { success, totalFiles: total, errors };
+});
+
 ipcMain.handle('go-online', async () => {
   if (!mainWindow) return { success: false };
-  await loadFrontend({ preferredPath: '/', reason: 'renderer:go-online' });
+  await loadFrontendFallback({ preferredPath: '/', reason: 'renderer:go-online' });
   mainWindow.show();
   mainWindow.focus();
   return { success: true };
