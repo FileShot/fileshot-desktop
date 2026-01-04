@@ -91,6 +91,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('start-upload', (event, filePaths) => callback(filePaths));
   },
   
+  // Upload files to online (triggers drop zone in webview)
+  uploadFilesToOnline: (paths) => ipcRenderer.invoke('upload-files-to-online', paths),
+  
+  // Receive trigger to upload files in the online webview
+  onTriggerOnlineUpload: (callback) => {
+    ipcRenderer.on('trigger-online-upload', (_event, paths) => {
+      try { callback(paths); } catch (_) {}
+    });
+  },
+  
   // Platform info
   platform: process.platform,
   isDesktop: true

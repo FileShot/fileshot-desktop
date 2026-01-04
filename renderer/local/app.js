@@ -1948,6 +1948,50 @@ function initOnlineTool() {
   wv.addEventListener('did-navigate', () => setUrlLabel(wv.getURL()));
   wv.addEventListener('did-navigate-in-page', () => setUrlLabel(wv.getURL()));
 
+  // Enable drag-drop onto webview for file uploads
+  const onlineFrame = wv.closest('.online-frame');
+  if (onlineFrame) {
+    onlineFrame.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'copy';
+    });
+    
+    onlineFrame.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      // Handle in-app drag from explorer
+      const itemsJson = e.dataTransfer?.getData('application/x-fileshot-items');
+      if (itemsJson) {
+        let items;
+        try { items = JSON.parse(itemsJson); } catch (_) { items = null; }
+        const list = Array.isArray(items) ? items : [];
+        const paths = list.map(it => String(it?.path || '')).filter(Boolean);
+        if (paths.length) {
+          triggerWebviewFileUpload(wv, paths);
+        }
+        return;
+      }
+      
+      // Handle OS-level file drop
+      const files = e.dataTransfer?.files;
+      if (files && files.length > 0) {
+        const paths = Array.from(files).map(f => f.path).filter(Boolean);
+        if (paths.length) {
+          triggerWebviewFileUpload(wv, paths);
+        }
+      }
+    });
+  }
+  
+  // Handle online upload trigger from main process
+  window.electronAPI?.onTriggerOnlineUpload?.((paths) => {
+    if (paths && paths.length) {
+      triggerWebviewFileUpload(wv, paths);
+    }
+  });
+
   const backBtn = DOM.onlineBackBtn();
   const fwdBtn = DOM.onlineForwardBtn();
   const reloadBtn = DOM.onlineReloadBtn();
@@ -2021,6 +2065,53 @@ function explorerRefresh() {
     explorerOpen(state.explorer.currentPath);
   } else {
     explorerShowDrives();
+  }
+}
+
+// ============================================================================
+// WEBVIEW FILE UPLOAD TRIGGER
+// ============================================================================
+
+/**
+ * Trigger file upload in the online webview by injecting a script
+ * that simulates a file drop on the dropzone.
+ */
+function triggerWebviewFileUpload(wv, paths) {
+  if (!wv || !paths || !paths.length) return;
+  
+  // We need to use executeJavaScript to trigger the file input in the webview
+  // The webview has a dropzone that accepts files
+  const script = `
+    (function() {
+      // Look for file input or dropzone
+      const dropzone = document.querySelector('.upload-dropzone, .dropzone, [class*="drop"]');
+      const fileInput = document.querySelector('input[type="file"]');
+      
+      if (fileInput) {
+        // Click the file input to trigger native file dialog
+        // Note: We can't programmatically set files due to security
+        fileInput.click();
+        console.log('[FileShot Desktop] Triggered file input click for upload');
+      } else if (dropzone) {
+        // Visual indicator that drop was received
+        dropzone.style.outline = '3px solid #f97316';
+        setTimeout(() => { dropzone.style.outline = ''; }, 1500);
+        console.log('[FileShot Desktop] Files received - use Choose Files button');
+      }
+      
+      // Show a notification
+      const msg = document.createElement('div');
+      msg.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#f97316;color:#fff;padding:12px 24px;border-radius:8px;z-index:99999;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,0.3);';
+      msg.textContent = 'Files received! Click "Choose Files" to select them.';
+      document.body.appendChild(msg);
+      setTimeout(() => msg.remove(), 3000);
+    })();
+  `;
+  
+  try {
+    wv.executeJavaScript(script);
+  } catch (e) {
+    console.error('[FileShot Desktop] Failed to trigger webview upload:', e);
   }
 }
 

@@ -1011,6 +1011,18 @@ ipcMain.handle('open-external', async (_event, url) => {
   }
 });
 
+// Handle files dragged onto the Online webview - trigger upload in the webview
+ipcMain.handle('upload-files-to-online', async (_event, paths) => {
+  if (!mainWindow || !paths || !paths.length) return { success: false };
+  try {
+    // Send file paths to the renderer which will handle the webview interaction
+    mainWindow.webContents.send('trigger-online-upload', paths);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
 ipcMain.handle('vault-list', async () => {
   const items = getVaultItems();
   return { items, totalBytes: vaultTotalBytes(items) };

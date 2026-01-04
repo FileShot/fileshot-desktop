@@ -1,18 +1,18 @@
 ﻿:root {
   color-scheme: dark;
-  --bg: #0a0e13;
-  --bg-secondary: #0f131a;
+  --bg: #0a0a0a;
+  --bg-secondary: #111111;
   --panel: rgba(255,255,255,0.04);
   --panel-hover: rgba(255,255,255,0.07);
   --border: rgba(255,255,255,0.09);
-  --text: #e8eef6;
-  --text-secondary: rgba(232,238,246,0.68);
+  --text: #f0f0f0;
+  --text-secondary: rgba(240,240,240,0.68);
   --accent: #f97316;
   --accent-hover: #ea580c;
   --ok: #10b981;
   --sidebar-width: 220px;
   --sidebar-width-collapsed: 60px;
-  --explorer-width: 280px;
+  --explorer-width: 320px;
 }
 
 * { box-sizing: border-box; }
@@ -30,7 +30,7 @@ body {
 .sidebar { width: var(--sidebar-width); background: var(--bg-secondary); border-right: 1px solid var(--border); display: flex; flex-direction: column; transition: width 0.3s ease; overflow: hidden; }
 .sidebar.collapsed { width: var(--sidebar-width-collapsed); }
 .sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 12px; border-bottom: 1px solid var(--border); }
-.logo-img { height: 28px; width: auto; object-fit: contain; border-radius: 4px; }
+.logo-img { height: 22px; width: auto; object-fit: contain; border-radius: 3px; }
 .btn-collapse { background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 8px; display: flex; border-radius: 8px; transition: background 0.2s; }
 .btn-collapse:hover { background: var(--panel-hover); }
 .sidebar-nav { flex: 1; display: flex; flex-direction: column; gap: 4px; padding: 12px; overflow-y: auto; }
