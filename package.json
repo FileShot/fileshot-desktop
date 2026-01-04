@@ -1,6 +1,6 @@
 {
   "name": "fileshot-desktop",
-  "version": "1.4.6",
+  "version": "1.4.7",
   "description": "FileShot.io Desktop Application - Fast, Private File Sharing",
   "main": "main.js",
   "scripts": {
@@ -51,10 +51,6 @@
         {
           "target": "nsis",
           "arch": ["x64", "ia32"]
-        },
-        {
-          "target": "portable",
-          "arch": ["x64"]
         }
       ],
       "icon": "build/icon.ico",
