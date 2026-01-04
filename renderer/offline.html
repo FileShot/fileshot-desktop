@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FileShot — Offline</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: #0b0f14;
+      color: #e8eef6;
+      display: grid;
+      place-items: center;
+      height: 100vh;
+    }
+    .card {
+      width: min(720px, calc(100vw - 32px));
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.03);
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 18px 60px rgba(0,0,0,0.45);
+    }
+    h1 { margin: 0 0 10px; font-size: 20px; }
+    p { margin: 0 0 12px; color: rgba(232,238,246,0.78); line-height: 1.45; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+    button {
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.06);
+      color: #e8eef6;
+      border-radius: 10px;
+      padding: 10px 12px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button:hover { background: rgba(255,255,255,0.1); }
+    .hint { font-size: 12px; color: rgba(232,238,246,0.6); margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Offline / can’t reach FileShot</h1>
+    <p>
+      The desktop app couldn’t load the cloud site right now. This can happen if you’re offline,
+      the tunnel is down, or DNS is being dramatic.
+    </p>
+    <p>
+      If this build includes a bundled copy of the frontend, FileShot will automatically use it.
+      Otherwise, connect to the internet and reopen the app.
+    </p>
+
+    <div class="row">
+      <button id="retry">Retry</button>
+      <button id="openWebsite">Open fileshot.io in browser</button>
+    </div>
+    <div class="hint">Tip: For "v1.2" we can make this a real offline-first local manager (local storage + optional sync).</div>
+  </div>
+
+  <script>
+    document.getElementById('retry').addEventListener('click', () => location.reload());
+    document.getElementById('openWebsite').addEventListener('click', () => {
+      window.open('https://fileshot.io', '_blank');
+    });
+  </script>
+</body>
+</html>

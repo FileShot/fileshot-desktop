@@ -17,6 +17,35 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // File operations
   selectFile: () => ipcRenderer.invoke('select-file'),
   selectFolder: () => ipcRenderer.invoke('select-folder'),
+
+  // Local vault
+  vaultList: () => ipcRenderer.invoke('vault-list'),
+  vaultAdd: (paths) => ipcRenderer.invoke('vault-add', paths),
+  vaultAddFolder: (folderPath) => ipcRenderer.invoke('vault-add-folder', folderPath),
+  vaultRemove: (localId) => ipcRenderer.invoke('vault-remove', localId),
+  vaultRevealKey: (localId) => ipcRenderer.invoke('vault-reveal-key', localId),
+
+  // ZKE upload
+  uploadZke: (localId, options, progressCb) => {
+    const requestId = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    if (typeof progressCb === 'function') {
+      ipcRenderer.on(`upload-progress:${requestId}`, (_event, payload) => {
+        try { progressCb(payload); } catch (_) {}
+      });
+    }
+    return ipcRenderer.invoke('upload-zke', { localId, options, requestId });
+  },
+
+  // Vault update notifications
+  onVaultUpdated: (callback) => {
+    ipcRenderer.on('vault-updated', (_event, payload) => {
+      try { callback(payload); } catch (_) {}
+    });
+  },
+
+  // App controls
+  goOnline: () => ipcRenderer.invoke('go-online'),
+  copyToClipboard: (text) => ipcRenderer.invoke('copy-to-clipboard', String(text || '')),
   
   // Recent uploads
   addRecentUpload: (upload) => ipcRenderer.invoke('add-recent-upload', upload),
@@ -36,46 +65,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   isDesktop: true
 });
 
-// Inject desktop-specific styles
+// Inject minimal desktop-specific UI (keep non-intrusive; do NOT break the site)
 window.addEventListener('DOMContentLoaded', () => {
-  const style = document.createElement('style');
-  style.textContent = `
-    /* Desktop app specific styles */
-    body {
-      -webkit-app-region: drag;
-      user-select: none;
-    }
-    
-    button, a, input, textarea, select {
-      -webkit-app-region: no-drag;
-      user-select: auto;
-    }
-    
-    /* Custom scrollbar for desktop */
-    ::-webkit-scrollbar {
-      width: 10px;
-      height: 10px;
-    }
-    
-    ::-webkit-scrollbar-track {
-      background: rgba(255, 255, 255, 0.05);
-    }
-    
-    ::-webkit-scrollbar-thumb {
-      background: rgba(255, 255, 255, 0.2);
-      border-radius: 5px;
-    }
-    
-    ::-webkit-scrollbar-thumb:hover {
-      background: rgba(255, 255, 255, 0.3);
-    }
-  `;
-  document.head.appendChild(style);
-  
-  // Add desktop indicator
+  // Add a subtle desktop indicator (no emoji; no pointer interception)
   const indicator = document.createElement('div');
   indicator.id = 'desktop-indicator';
-  indicator.textContent = '🖥️ Desktop App';
+  indicator.textContent = 'Desktop App';
   indicator.style.cssText = `
     position: fixed;
     bottom: 10px;
@@ -87,6 +82,7 @@ window.addEventListener('DOMContentLoaded', () => {
     font-size: 12px;
     z-index: 10000;
     pointer-events: none;
+    opacity: 0.55;
   `;
   document.body.appendChild(indicator);
 });

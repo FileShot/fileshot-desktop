@@ -7,6 +7,8 @@
     "start": "electron .",
     "start:prod": "electron .",
     "dev": "electron . --dev",
+    "sync-frontend": "node scripts/sync-frontend.js",
+    "prebuild": "npm run sync-frontend",
     "build": "electron-builder",
     "build:win": "electron-builder --win",
     "build:mac": "electron-builder --mac",

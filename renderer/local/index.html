@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FileShot Desktop</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">FileShot</div>
+      <div class="tag">Local‑first vault • Zero‑Knowledge uploads</div>
+    </div>
+    <div class="actions">
+      <button id="btnAddFiles" class="btn">Add files</button>
+      <button id="btnAddFolder" class="btn btn-secondary">Add folder</button>
+      <button id="btnGoOnline" class="btn btn-primary">Go Online</button>
+    </div>
+  </header>
+
+  <main class="main">
+    <section class="panel">
+      <h2>Local Vault</h2>
+      <div id="status" class="status"></div>
+      <div id="empty" class="empty" hidden>
+        <div class="empty-title">No local files yet</div>
+        <div class="empty-sub">Add files to store them locally. Uploads are ZKE: the server never sees plaintext.</div>
+      </div>
+      <div id="list" class="list"></div>
+    </section>
+
+    <aside class="panel side">
+      <h2>Upload</h2>
+      <div class="field">
+        <label class="label">Mode</label>
+        <select id="uploadMode" class="input">
+          <option value="raw">Password OFF (link contains #k= key)</option>
+          <option value="passphrase">Password ON (recipient enters password)</option>
+        </select>
+      </div>
+
+      <div id="passphraseWrap" class="field" hidden>
+        <label class="label">Password</label>
+        <input id="passphrase" class="input" type="password" placeholder="Enter a strong password" />
+        <div class="hint">We cannot recover it. Keep it safe.</div>
+      </div>
+
+      <div class="hint">
+        Tip: For password‑OFF, the key lives in the URL fragment (#k=...) and never reaches the server.
+      </div>
+
+      <div class="field">
+        <label class="label">Progress</label>
+        <div class="progress">
+          <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+        </div>
+        <div id="progressText" class="hint">Idle</div>
+      </div>
+
+      <div class="field">
+        <label class="label">Share link</label>
+        <div class="row">
+          <input id="shareLink" class="input" type="text" readonly placeholder="Upload a file to generate a link" />
+          <button id="btnCopy" class="btn btn-secondary" disabled>Copy</button>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
