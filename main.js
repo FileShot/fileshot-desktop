@@ -70,6 +70,60 @@ function getConfiguredDriveLetter() {
   return /^[A-Z]$/.test(letter) ? letter : 'F';
 }
 
+function isDriveLetterAvailable(letter) {
+  const L = String(letter || '').replace(':', '').toUpperCase().slice(0, 1);
+  if (!/^[A-Z]$/.test(L)) return false;
+  // Avoid A/B (floppy legacy) and C (system drive).
+  if (L === 'A' || L === 'B' || L === 'C') return false;
+  try {
+    return !fs.existsSync(`${L}:\\`);
+  } catch (_) {
+    return false;
+  }
+}
+
+function pickAvailableDriveLetter(preferred) {
+  const pref = String(preferred || '').replace(':', '').toUpperCase().slice(0, 1);
+  const order = [];
+  if (/^[A-Z]$/.test(pref)) order.push(pref);
+
+  // Common “nice” letters first.
+  for (let c = 'F'.charCodeAt(0); c <= 'Z'.charCodeAt(0); c++) {
+    order.push(String.fromCharCode(c));
+  }
+  // Fall back to D/E if available.
+  order.push('E');
+  order.push('D');
+
+  for (const L of order) {
+    if (isDriveLetterAvailable(L)) return L;
+  }
+  return null;
+}
+
+async function isRunningAsAdmin() {
+  if (process.platform !== 'win32') return false;
+  // net session succeeds only when elevated.
+  try {
+    await execPromise('net session', { timeout: 5000 });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function relaunchAsStandardUser() {
+  if (process.platform !== 'win32') return false;
+  // Best-effort: launching via explorer.exe usually uses the non-elevated shell token.
+  try {
+    const exePath = process.execPath;
+    await execPromise(`explorer.exe "${exePath}"`);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 function isDriveFeatureAvailable() {
   return process.platform === 'win32';
 }
@@ -447,18 +501,75 @@ async function enableFileShotDrive() {
   }
 
   await ensureDriveDirs();
-  const letter = getConfiguredDriveLetter();
+  let letter = getConfiguredDriveLetter();
+
+  // If the chosen letter is already in use, pick a free one automatically.
+  if (!isDriveLetterAvailable(letter)) {
+    const picked = pickAvailableDriveLetter(letter);
+    if (picked) {
+      letter = picked;
+      store.set('drive.letter', letter);
+    }
+  }
+
+  // If we're running elevated, this is a common reason the drive doesn't appear
+  // in normal Explorer. Warn and offer to relaunch normally.
+  const elevated = await isRunningAsAdmin();
+  if (elevated) {
+    const res = await dialog.showMessageBox({
+      type: 'warning',
+      title: 'FileShot Drive',
+      message: 'FileShot is running as Administrator. Mapped drives created from an elevated app may not show up in normal File Explorer.',
+      detail: 'Recommended: restart FileShot normally (not as administrator) so the drive appears under “This PC”.',
+      buttons: ['Restart normally', 'Continue anyway', 'Disable Drive'],
+      defaultId: 0,
+      cancelId: 1
+    });
+
+    if (res.response === 0) {
+      const relaunched = await relaunchAsStandardUser();
+      if (relaunched) {
+        app.quit();
+        return;
+      }
+    }
+
+    if (res.response === 2) {
+      await disableFileShotDrive();
+      return;
+    }
+  }
+
   try {
     await mapDriveLetter(letter, getDriveInboxDir());
   } catch (e) {
-    const details = (e && e.stderr) ? String(e.stderr).trim() : '';
-    dialog.showMessageBox({
-      type: 'error',
-      title: 'FileShot Drive',
-      message: `Could not map drive ${letter}:\\. It may already be in use.`,
-      detail: details
-    });
-    return;
+    // If it failed because the letter is in use, try a different letter automatically.
+    const picked = pickAvailableDriveLetter(letter);
+    if (picked && picked !== letter) {
+      try {
+        await mapDriveLetter(picked, getDriveInboxDir());
+        letter = picked;
+        store.set('drive.letter', letter);
+      } catch (e2) {
+        const details2 = (e2 && e2.stderr) ? String(e2.stderr).trim() : '';
+        dialog.showMessageBox({
+          type: 'error',
+          title: 'FileShot Drive',
+          message: `Could not map a drive letter automatically.`,
+          detail: details2
+        });
+        return;
+      }
+    } else {
+      const details = (e && e.stderr) ? String(e.stderr).trim() : '';
+      dialog.showMessageBox({
+        type: 'error',
+        title: 'FileShot Drive',
+        message: `Could not map drive ${letter}:\\. It may already be in use.`,
+        detail: details
+      });
+      return;
+    }
   }
 
   store.set('drive.enabled', true);
@@ -1893,9 +2004,17 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
 
-  // Optional: enable FileShot Drive at startup if the user enabled it previously.
-  if (isDriveFeatureAvailable() && Boolean(store.get('drive.enabled', false))) {
-    enableFileShotDrive().catch(() => {});
+  // Windows: enable FileShot Drive by default on first run.
+  // (This was the core point of the v1.4.8 update; requiring a manual tray toggle is too easy to miss.)
+  if (isDriveFeatureAvailable()) {
+    const existing = store.get('drive.enabled');
+    if (typeof existing === 'undefined') {
+      store.set('drive.enabled', true);
+    }
+
+    if (Boolean(store.get('drive.enabled', false))) {
+      enableFileShotDrive().catch(() => {});
+    }
   }
   
   // Check for updates on startup (after 5 seconds)
