@@ -1,6 +1,6 @@
 {
   "name": "fileshot-desktop",
-  "version": "1.4.7",
+  "version": "1.4.8",
   "description": "FileShot.io Desktop Application - Fast, Private File Sharing",
   "main": "main.js",
   "scripts": {
@@ -126,7 +126,8 @@
     "axios": "^1.6.5",
     "form-data": "^4.0.0",
     "electron-store": "^8.1.0",
-    "node-notifier": "^10.0.1"
+    "node-notifier": "^10.0.1",
+    "chokidar": "^3.6.0"
   },
   "devDependencies": {
     "electron": "^28.1.0",

@@ -3,10 +3,12 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
+const { exec } = require('child_process');
 const axios = require('axios');
 const FormData = require('form-data');
 const { autoUpdater } = require('electron-updater');
 const Store = require('electron-store');
+const chokidar = require('chokidar');
 
 const { encryptFileToZkeContainer, decryptZkeContainer, parseHeader } = require('./utils/zke-stream');
 
@@ -18,6 +20,11 @@ let mainWindow = null;
 let tray = null;
 let uploadQueue = [];
 let isQuitting = false;
+
+// FileShot Drive (Windows): map a drive letter to a local inbox folder
+let driveWatcher = null;
+let driveQueue = [];
+let driveQueueRunning = false;
 
 // App configuration
 const isDev = process.argv.includes('--dev');
@@ -43,6 +50,433 @@ function getVaultFilesDir() {
 
 function getVaultTmpDir() {
   return path.join(getVaultRoot(), 'tmp');
+}
+
+function getDriveInboxDir() {
+  return path.join(getVaultRoot(), 'drive-inbox');
+}
+
+function getDriveUploadingDir() {
+  return path.join(getDriveInboxDir(), '_uploading');
+}
+
+function getDriveUploadedDir() {
+  return path.join(getDriveInboxDir(), '_uploaded');
+}
+
+function getConfiguredDriveLetter() {
+  const raw = String(store.get('drive.letter', 'F') || 'F').trim();
+  const letter = raw.replace(':', '').toUpperCase().slice(0, 1);
+  return /^[A-Z]$/.test(letter) ? letter : 'F';
+}
+
+function isDriveFeatureAvailable() {
+  return process.platform === 'win32';
+}
+
+function execPromise(command, opts = {}) {
+  return new Promise((resolve, reject) => {
+    exec(command, { windowsHide: true, ...opts }, (error, stdout, stderr) => {
+      if (error) return reject({ error, stdout: String(stdout || ''), stderr: String(stderr || '') });
+      resolve({ stdout: String(stdout || ''), stderr: String(stderr || '') });
+    });
+  });
+}
+
+async function ensureDriveDirs() {
+  ensureVaultDirs();
+  fs.mkdirSync(getDriveInboxDir(), { recursive: true });
+  fs.mkdirSync(getDriveUploadingDir(), { recursive: true });
+  fs.mkdirSync(getDriveUploadedDir(), { recursive: true });
+}
+
+function sanitizeFileName(name) {
+  const s = String(name || '').trim();
+  // Windows invalid characters: \ / : * ? " < > |
+  return s.replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').slice(0, 180) || 'file';
+}
+
+async function waitForStableFile(filePath, stableMs = 1500, maxWaitMs = 10 * 60 * 1000) {
+  const p = String(filePath || '');
+  const start = Date.now();
+
+  let lastSize = -1;
+  let lastMtime = 0;
+  let stableFor = 0;
+  let lastTick = Date.now();
+
+  while (Date.now() - start < maxWaitMs) {
+    let st;
+    try {
+      st = await fs.promises.stat(p);
+    } catch (_) {
+      // File might still be being moved/created; retry.
+      await new Promise(r => setTimeout(r, 250));
+      continue;
+    }
+
+    const size = Number(st.size || 0);
+    const mtime = Number(st.mtimeMs || 0);
+
+    const now = Date.now();
+    const dt = now - lastTick;
+    lastTick = now;
+
+    const unchanged = size === lastSize && mtime === lastMtime;
+    if (unchanged) {
+      stableFor += dt;
+      if (stableFor >= stableMs) return true;
+    } else {
+      stableFor = 0;
+      lastSize = size;
+      lastMtime = mtime;
+    }
+
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  throw new Error('Timed out waiting for file to become stable');
+}
+
+async function mapDriveLetter(letter, targetDir) {
+  if (!isDriveFeatureAvailable()) throw new Error('Drive mapping is only supported on Windows');
+  const L = String(letter || '').replace(':', '').toUpperCase();
+  if (!/^[A-Z]$/.test(L)) throw new Error('Invalid drive letter');
+  const dir = String(targetDir || '');
+  if (!dir) throw new Error('Missing target directory');
+
+  // Ensure directory exists.
+  fs.mkdirSync(dir, { recursive: true });
+
+  // SUBST will fail if the letter is already in use.
+  await execPromise(`subst ${L}: "${dir}"`);
+}
+
+async function unmapDriveLetter(letter) {
+  if (!isDriveFeatureAvailable()) return;
+  const L = String(letter || '').replace(':', '').toUpperCase();
+  if (!/^[A-Z]$/.test(L)) return;
+  // Best-effort.
+  try {
+    await execPromise(`subst ${L}: /D`);
+  } catch (_) {}
+}
+
+function getDriveRootPath(letter) {
+  const L = String(letter || '').replace(':', '').toUpperCase();
+  return `${L}:\\`;
+}
+
+function pushRecentUpload(fileName, url) {
+  const recentUploads = store.get('recentUploads', []);
+  recentUploads.unshift({ fileName, url, uploadedAt: Date.now() });
+  if (recentUploads.length > 10) recentUploads.length = 10;
+  store.set('recentUploads', recentUploads);
+  rebuildTrayMenu();
+}
+
+async function uploadPlainFileAsZke({ inputPath, originalName, onProgress }) {
+  const p = String(inputPath || '');
+  if (!p || !fs.existsSync(p)) throw new Error('Missing input file');
+  const st = fs.statSync(p);
+  if (!st.isFile()) throw new Error('Input must be a file');
+
+  const token = store.get('authToken', null);
+  if (!token) throw new Error('Not logged in');
+
+  const headers = { Authorization: `Bearer ${token}` };
+  const safeName = String(originalName || path.basename(p) || 'file');
+
+  const tmpId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
+  ensureVaultDirs();
+  const tmpOut = path.join(getVaultTmpDir(), `${tmpId}.fszk`);
+
+  if (typeof onProgress === 'function') onProgress({ percent: 5, stage: 'Encrypting locally (ZKE)...' });
+
+  const enc = await encryptFileToZkeContainer({
+    inputPath: p,
+    outputPath: tmpOut,
+    originalName: safeName,
+    originalMimeType: 'application/octet-stream',
+    mode: 'raw',
+    chunkSize: 512 * 1024
+  });
+
+  const encryptedSize = fs.statSync(tmpOut).size;
+
+  if (typeof onProgress === 'function') onProgress({ percent: 20, stage: 'Requesting upload slot...' });
+
+  const preUploadBody = {
+    fileName: safeName,
+    fileSize: st.size,
+    isZeroKnowledge: 'true',
+    originalFileName: safeName,
+    originalFileSize: st.size,
+    originalMimeType: 'application/octet-stream'
+  };
+
+  const pre = await axios.post(`${API_URL}/files/pre-upload`, preUploadBody, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...headers
+    },
+    timeout: 60000
+  });
+
+  const fileId = pre?.data?.fileId;
+  if (!fileId) throw new Error('Pre-upload failed (missing fileId)');
+
+  const NET_CHUNK_SIZE = 8 * 1024 * 1024; // 8MB
+  const totalChunks = Math.max(1, Math.ceil(encryptedSize / NET_CHUNK_SIZE));
+  let uploaded = 0;
+
+  if (typeof onProgress === 'function') onProgress({ percent: 25, stage: `Uploading (${totalChunks} chunks)...` });
+
+  const fd = fs.openSync(tmpOut, 'r');
+  try {
+    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+      const start = chunkIndex * NET_CHUNK_SIZE;
+      const end = Math.min(start + NET_CHUNK_SIZE, encryptedSize);
+      const len = end - start;
+
+      const buf = Buffer.allocUnsafe(len);
+      const read = fs.readSync(fd, buf, 0, len, start);
+      if (read !== len) throw new Error('Failed to read encrypted chunk');
+
+      const form = new FormData();
+      form.append('chunk', buf, { filename: `chunk-${chunkIndex}` });
+      form.append('totalChunks', String(totalChunks));
+      form.append('isLastChunk', String(chunkIndex === totalChunks - 1));
+
+      await axios.post(`${API_URL}/files/upload-chunk/${fileId}/${chunkIndex}`, form, {
+        headers: {
+          ...form.getHeaders(),
+          ...headers
+        },
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+        timeout: 600000
+      });
+
+      uploaded += len;
+      const pct = 25 + Math.floor((uploaded / encryptedSize) * 70);
+      if (typeof onProgress === 'function') onProgress({ percent: Math.min(95, pct), stage: `Uploading... ${chunkIndex + 1}/${totalChunks}` });
+    }
+  } finally {
+    try { fs.closeSync(fd); } catch (_) {}
+  }
+
+  if (typeof onProgress === 'function') onProgress({ percent: 96, stage: 'Finalizing...' });
+
+  await axios.post(`${API_URL}/files/finalize-upload/${fileId}`, {}, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...headers
+    },
+    timeout: 600000
+  });
+
+  const shareUrl = `${FRONTEND_URL}/downloads.html?f=${encodeURIComponent(fileId)}${enc.rawKey ? `#k=${encodeURIComponent(enc.rawKey)}` : ''}`;
+
+  try { fs.unlinkSync(tmpOut); } catch (_) {}
+
+  if (typeof onProgress === 'function') onProgress({ percent: 100, stage: 'Done' });
+  return { fileId, shareUrl };
+}
+
+async function startDriveWatcher() {
+  if (!isDriveFeatureAvailable()) return;
+  if (driveWatcher) return;
+
+  await ensureDriveDirs();
+
+  driveWatcher = chokidar.watch(getDriveInboxDir(), {
+    persistent: true,
+    ignoreInitial: true,
+    depth: 99,
+    awaitWriteFinish: false,
+    ignored: [
+      /\\_uploading\\/i,
+      /\\_uploaded\\/i,
+      /\\\.tmp\\/i,
+      /\.url$/i,
+      /\.lnk$/i
+    ]
+  });
+
+  async function processDriveQueue() {
+    if (driveQueueRunning) return;
+    driveQueueRunning = true;
+    try {
+      while (driveQueue.length) {
+        if (!isDriveFeatureAvailable()) return;
+
+        const next = driveQueue.shift();
+        const originalPath = String(next || '');
+        if (!originalPath) continue;
+
+        const notifier = require('node-notifier');
+
+        try {
+          // Only handle real files.
+          const st = safeStat(originalPath);
+          if (!st || !st.isFile()) continue;
+
+          // Wait for Explorer copy to finish.
+          await waitForStableFile(originalPath, 1500, 10 * 60 * 1000);
+
+          const baseName = path.basename(originalPath);
+          const safeBase = sanitizeFileName(baseName);
+
+          // Move into _uploading to prevent re-trigger and to visually separate state.
+          const uploadingPath = path.join(getDriveUploadingDir(), safeBase);
+          let workPath = originalPath;
+          try {
+            fs.mkdirSync(getDriveUploadingDir(), { recursive: true });
+            // If destination exists, add a suffix.
+            let dest = uploadingPath;
+            if (fs.existsSync(dest)) {
+              const ext = path.extname(safeBase);
+              const stem = safeBase.slice(0, safeBase.length - ext.length);
+              dest = path.join(getDriveUploadingDir(), `${stem}-${Date.now()}${ext}`);
+            }
+            fs.renameSync(originalPath, dest);
+            workPath = dest;
+          } catch (_) {
+            // If rename fails (locked), upload in-place.
+            workPath = originalPath;
+          }
+
+          notifier.notify({
+            title: 'FileShot Drive',
+            message: `Uploading: ${safeBase}`,
+            icon: path.join(__dirname, 'assets', 'icon.png'),
+            sound: false
+          });
+
+          const { shareUrl } = await uploadPlainFileAsZke({
+            inputPath: workPath,
+            originalName: safeBase,
+            onProgress: (_) => {}
+          });
+
+          pushRecentUpload(safeBase, shareUrl);
+
+          // Move to _uploaded and drop a .url shortcut for the share link.
+          try {
+            fs.mkdirSync(getDriveUploadedDir(), { recursive: true });
+            const uploadedFilePath = path.join(getDriveUploadedDir(), path.basename(workPath));
+            if (workPath !== uploadedFilePath) {
+              let dest = uploadedFilePath;
+              if (fs.existsSync(dest)) {
+                const ext = path.extname(dest);
+                const stem = dest.slice(0, dest.length - ext.length);
+                dest = `${stem}-${Date.now()}${ext}`;
+              }
+              fs.renameSync(workPath, dest);
+            }
+
+            const urlName = `${sanitizeFileName(safeBase)}.url`;
+            const urlPath = path.join(getDriveUploadedDir(), urlName);
+            const shortcut = `[InternetShortcut]\r\nURL=${shareUrl}\r\n`;
+            fs.writeFileSync(urlPath, shortcut, 'utf8');
+          } catch (_) {}
+
+          notifier.notify({
+            title: 'FileShot Drive',
+            message: `Uploaded: ${safeBase}`,
+            icon: path.join(__dirname, 'assets', 'icon.png'),
+            sound: false
+          });
+        } catch (e) {
+          const msg = e && e.message ? e.message : String(e);
+          console.warn('[Drive] Upload failed:', msg);
+          try {
+            notifier.notify({
+              title: 'FileShot Drive',
+              message: `Upload failed: ${msg}`,
+              icon: path.join(__dirname, 'assets', 'icon.png'),
+              sound: false
+            });
+          } catch (_) {}
+        }
+      }
+    } finally {
+      driveQueueRunning = false;
+    }
+  }
+
+  driveWatcher.on('add', (filePath) => {
+    if (!isDriveFeatureAvailable()) return;
+    const p = String(filePath || '');
+    if (!p) return;
+
+    // Small guard against pathological spikes.
+    if (driveQueue.length < 5000) {
+      driveQueue.push(p);
+    }
+
+    processDriveQueue().catch(() => {});
+  });
+}
+
+async function stopDriveWatcher() {
+  if (driveWatcher) {
+    try {
+      await driveWatcher.close();
+    } catch (_) {}
+    driveWatcher = null;
+  }
+
+  // Clear any queued work; we'll rescan/continue fresh on next enable.
+  driveQueue = [];
+  driveQueueRunning = false;
+}
+
+async function cleanupFileShotDriveRuntime() {
+  if (!isDriveFeatureAvailable()) return;
+  const letter = getConfiguredDriveLetter();
+  await stopDriveWatcher();
+  await unmapDriveLetter(letter);
+}
+
+async function enableFileShotDrive() {
+  if (!isDriveFeatureAvailable()) {
+    dialog.showMessageBox({ type: 'info', message: 'FileShot Drive is currently Windows-only.' });
+    return;
+  }
+
+  await ensureDriveDirs();
+  const letter = getConfiguredDriveLetter();
+  try {
+    await mapDriveLetter(letter, getDriveInboxDir());
+  } catch (e) {
+    const details = (e && e.stderr) ? String(e.stderr).trim() : '';
+    dialog.showMessageBox({
+      type: 'error',
+      title: 'FileShot Drive',
+      message: `Could not map drive ${letter}:\\. It may already be in use.`,
+      detail: details
+    });
+    return;
+  }
+
+  store.set('drive.enabled', true);
+  await startDriveWatcher();
+  rebuildTrayMenu();
+
+  try {
+    shell.openPath(getDriveRootPath(letter));
+  } catch (_) {}
+}
+
+async function disableFileShotDrive() {
+  if (!isDriveFeatureAvailable()) return;
+  const letter = getConfiguredDriveLetter();
+  await stopDriveWatcher();
+  await unmapDriveLetter(letter);
+  store.set('drive.enabled', false);
+  rebuildTrayMenu();
 }
 
 function ensureVaultDirs() {
@@ -482,6 +916,9 @@ ipcMain.on('start-drag', async (event, paths) => {
  * Create system tray icon
  */
 function buildTrayMenuTemplate() {
+  const driveEnabled = Boolean(store.get('drive.enabled', false));
+  const driveLetter = getConfiguredDriveLetter();
+
   return [
     {
       label: 'Open FileShot',
@@ -529,6 +966,39 @@ function buildTrayMenuTemplate() {
       click: () => {
         selectAndUploadFolder();
       }
+    },
+    {
+      label: `FileShot Drive (${driveLetter}:)`,
+      submenu: [
+        {
+          label: driveEnabled ? 'Disable Drive' : 'Enable Drive',
+          click: () => {
+            if (driveEnabled) {
+              disableFileShotDrive().catch(() => {});
+            } else {
+              enableFileShotDrive().catch(() => {});
+            }
+          }
+        },
+        {
+          label: 'Open Drive',
+          enabled: driveEnabled,
+          click: () => {
+            shell.openPath(getDriveRootPath(driveLetter));
+          }
+        },
+        {
+          label: 'Open Drive Inbox Folder',
+          click: () => {
+            ensureDriveDirs().catch(() => {});
+            shell.openPath(getDriveInboxDir());
+          }
+        },
+        {
+          label: 'Note: drop files to auto-upload',
+          enabled: false
+        }
+      ]
     },
     { type: 'separator' },
     {
@@ -1422,6 +1892,11 @@ ipcMain.handle('upload-zke', async (event, { localId, options, requestId }) => {
 app.whenReady().then(() => {
   createWindow();
   createTray();
+
+  // Optional: enable FileShot Drive at startup if the user enabled it previously.
+  if (isDriveFeatureAvailable() && Boolean(store.get('drive.enabled', false))) {
+    enableFileShotDrive().catch(() => {});
+  }
   
   // Check for updates on startup (after 5 seconds)
   if (!isDev) {
@@ -1448,6 +1923,10 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  // Best-effort cleanup of mapped drive.
+  if (isDriveFeatureAvailable() && Boolean(store.get('drive.enabled', false))) {
+    cleanupFileShotDriveRuntime().catch(() => {});
+  }
 });
 
 // Handle uncaught exceptions
