@@ -64,6 +64,10 @@ function getDriveUploadedDir() {
   return path.join(getDriveInboxDir(), '_uploaded');
 }
 
+function getDriveFailedDir() {
+  return path.join(getDriveInboxDir(), '_failed');
+}
+
 function getConfiguredDriveLetter() {
   const raw = String(store.get('drive.letter', 'F') || 'F').trim();
   const letter = raw.replace(':', '').toUpperCase().slice(0, 1);
@@ -142,6 +146,141 @@ async function ensureDriveDirs() {
   fs.mkdirSync(getDriveInboxDir(), { recursive: true });
   fs.mkdirSync(getDriveUploadingDir(), { recursive: true });
   fs.mkdirSync(getDriveUploadedDir(), { recursive: true });
+  fs.mkdirSync(getDriveFailedDir(), { recursive: true });
+}
+
+// ============================================================================
+// STORAGE QUOTA (tier usage/limit)
+// ============================================================================
+
+const STORAGE_USAGE_TTL_MS = 2 * 60 * 1000;
+let storageUsageCache = {
+  data: null,
+  lastFetchMs: 0,
+  lastError: null
+};
+
+function formatBytes(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n < 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  const digits = i === 0 ? 0 : i === 1 ? 1 : 2;
+  return `${v.toFixed(digits)} ${units[i]}`;
+}
+
+function formatQuotaLine(info) {
+  if (!info) return 'Storage: (not loaded yet)';
+  const tier = String(info.tier || 'free');
+  const usage = Number(info.usage || 0);
+  const limit = info.limit;
+  if (limit === null || typeof limit === 'undefined') {
+    return `Storage: ${formatBytes(usage)} used (Tier: ${tier})`;
+  }
+  const lim = Number(limit);
+  if (!Number.isFinite(lim) || lim <= 0) {
+    return `Storage: ${formatBytes(usage)} used (Tier: ${tier})`;
+  }
+  const remaining = Math.max(0, lim - usage);
+  return `Storage: ${formatBytes(usage)} / ${formatBytes(lim)} (Remaining: ${formatBytes(remaining)})`;
+}
+
+async function fetchStorageUsageFromApi() {
+  const token = store.get('authToken', null);
+  if (!token) throw new Error('Not logged in');
+
+  const res = await axios.get(`${API_URL}/files/usage`, {
+    headers: { Authorization: `Bearer ${token}` },
+    timeout: 15000
+  });
+
+  const usage = res?.data?.usage;
+  const limit = res?.data?.limit;
+  const tier = res?.data?.tier;
+
+  if (typeof usage === 'undefined') throw new Error('Usage API returned no usage');
+  return { usage, limit, tier };
+}
+
+function buildStorageStatusText({ info, error }) {
+  const now = new Date();
+  const lines = [];
+  lines.push('FileShot Drive — Storage Status');
+  lines.push('');
+  lines.push(`Updated: ${now.toLocaleString()}`);
+  lines.push('');
+
+  if (error) {
+    lines.push('Status: unavailable');
+    lines.push(`Error: ${String(error)}`);
+  } else if (info) {
+    const tier = String(info.tier || 'free');
+    const usage = Number(info.usage || 0);
+    const limit = info.limit;
+    lines.push(`Tier: ${tier}`);
+    if (limit === null || typeof limit === 'undefined') {
+      lines.push(`Used: ${formatBytes(usage)}`);
+      lines.push('Limit: Unlimited');
+    } else {
+      const lim = Number(limit);
+      lines.push(`Used: ${formatBytes(usage)}`);
+      lines.push(`Limit: ${formatBytes(lim)}`);
+      lines.push(`Remaining: ${formatBytes(Math.max(0, lim - usage))}`);
+    }
+    lines.push('');
+    lines.push('Tip: Upgrade or manage storage at https://fileshot.io/pricing.html');
+  } else {
+    lines.push('Status: not loaded');
+    lines.push('Log in to see your plan storage limit.');
+  }
+
+  lines.push('');
+  lines.push('Note: Windows Explorer drive “capacity” cannot be customized when using SUBST.');
+  lines.push('This file shows your actual FileShot account storage limit.');
+  lines.push('');
+  return lines.join(os.EOL);
+}
+
+async function writeDriveStorageStatusFile({ info, error }) {
+  if (!isDriveFeatureAvailable()) return;
+  try {
+    await ensureDriveDirs();
+    const statusPath = path.join(getDriveInboxDir(), 'FILESHOT_STORAGE.txt');
+    fs.writeFileSync(statusPath, buildStorageStatusText({ info, error }), 'utf8');
+  } catch (_) {
+    // Best-effort.
+  }
+}
+
+async function refreshStorageUsage({ force = false, reason = '' } = {}) {
+  const now = Date.now();
+  const isFresh = storageUsageCache.data && (now - storageUsageCache.lastFetchMs) < STORAGE_USAGE_TTL_MS;
+  if (!force && isFresh) return storageUsageCache.data;
+
+  try {
+    const info = await fetchStorageUsageFromApi();
+    storageUsageCache = { data: info, lastFetchMs: now, lastError: null };
+    await writeDriveStorageStatusFile({ info, error: null });
+    rebuildTrayMenu();
+    return info;
+  } catch (e) {
+    const msg = e?.response?.data?.error || e?.message || String(e);
+    storageUsageCache = { ...storageUsageCache, lastFetchMs: now, lastError: msg };
+    await writeDriveStorageStatusFile({ info: storageUsageCache.data, error: msg });
+    // Don't spam rebuilds on failure; but tray may need to show error.
+    rebuildTrayMenu();
+    return storageUsageCache.data;
+  } finally {
+    if (reason) {
+      // Lightweight debug breadcrumb.
+      try { console.log('[StorageUsage] refreshed', { reason, ok: !storageUsageCache.lastError }); } catch (_) {}
+    }
+  }
 }
 
 function sanitizeFileName(name) {
@@ -382,6 +521,62 @@ async function startDriveWatcher() {
           const baseName = path.basename(originalPath);
           const safeBase = sanitizeFileName(baseName);
 
+          // Best-effort: check quota before uploading so we can fail fast with a clear message.
+          // If we can't fetch usage (offline/not logged in), we still attempt the upload and let the server enforce.
+          let quotaInfo = null;
+          try {
+            quotaInfo = await refreshStorageUsage({ force: false, reason: 'drive:precheck' });
+          } catch (_) {
+            quotaInfo = storageUsageCache.data;
+          }
+
+          if (quotaInfo && quotaInfo.limit !== null && typeof quotaInfo.limit !== 'undefined') {
+            const usage = Number(quotaInfo.usage || 0);
+            const limit = Number(quotaInfo.limit);
+            const fileSize = Number(st.size || 0);
+            if (Number.isFinite(limit) && limit > 0 && Number.isFinite(usage) && (usage + fileSize) > limit) {
+              const tier = String(quotaInfo.tier || 'free');
+              const msg = `Storage full (${tier}): ${formatBytes(usage)} used of ${formatBytes(limit)}. File is ${formatBytes(fileSize)}.`;
+
+              try {
+                notifier.notify({
+                  title: 'FileShot Drive',
+                  message: msg,
+                  icon: path.join(__dirname, 'assets', 'icon.png'),
+                  sound: false
+                });
+              } catch (_) {}
+
+              // Move into _failed so it's not retried endlessly.
+              try {
+                fs.mkdirSync(getDriveFailedDir(), { recursive: true });
+                let dest = path.join(getDriveFailedDir(), safeBase);
+                if (fs.existsSync(dest)) {
+                  const ext = path.extname(safeBase);
+                  const stem = safeBase.slice(0, safeBase.length - ext.length);
+                  dest = path.join(getDriveFailedDir(), `${stem}-${Date.now()}${ext}`);
+                }
+                fs.renameSync(originalPath, dest);
+
+                const errPath = `${dest}.error.txt`;
+                const details = [
+                  'FileShot Drive — Upload blocked (storage limit reached)',
+                  '',
+                  msg,
+                  '',
+                  'Manage your storage or upgrade:',
+                  'https://fileshot.io/pricing.html',
+                  ''
+                ].join(os.EOL);
+                fs.writeFileSync(errPath, details, 'utf8');
+              } catch (_) {
+                // If we can't move it, leave it where it is.
+              }
+
+              continue;
+            }
+          }
+
           // Move into _uploading to prevent re-trigger and to visually separate state.
           const uploadingPath = path.join(getDriveUploadingDir(), safeBase);
           let workPath = originalPath;
@@ -575,6 +770,11 @@ async function enableFileShotDrive() {
   store.set('drive.enabled', true);
   await startDriveWatcher();
   rebuildTrayMenu();
+
+  // Best-effort: create/update the storage status file immediately.
+  refreshStorageUsage({ force: true, reason: 'drive:enabled' }).catch(() => {
+    writeDriveStorageStatusFile({ info: storageUsageCache.data, error: storageUsageCache.lastError }).catch(() => {});
+  });
 
   try {
     shell.openPath(getDriveRootPath(letter));
@@ -1030,6 +1230,12 @@ function buildTrayMenuTemplate() {
   const driveEnabled = Boolean(store.get('drive.enabled', false));
   const driveLetter = getConfiguredDriveLetter();
 
+  const storageInfo = storageUsageCache.data;
+  const storageError = storageUsageCache.lastError;
+  const storageLabel = storageError
+    ? `Storage: (error) ${String(storageError).slice(0, 120)}`
+    : formatQuotaLine(storageInfo);
+
   return [
     {
       label: 'Open FileShot',
@@ -1064,6 +1270,16 @@ function buildTrayMenuTemplate() {
           mainWindow.focus();
           loadFrontend({ preferredPath: '/my-files.html', reason: 'tray:my-files' }).catch(() => {});
         }
+      }
+    },
+    {
+      label: storageLabel,
+      enabled: false
+    },
+    {
+      label: 'Refresh Storage Info',
+      click: () => {
+        refreshStorageUsage({ force: true, reason: 'tray:refresh' }).catch(() => {});
       }
     },
     {
@@ -1108,6 +1324,24 @@ function buildTrayMenuTemplate() {
         {
           label: 'Note: drop files to auto-upload',
           enabled: false
+        },
+        { type: 'separator' },
+        {
+          label: storageLabel,
+          enabled: false
+        },
+        {
+          label: 'Open Storage Status File',
+          click: () => {
+            ensureDriveDirs().catch(() => {});
+            shell.openPath(path.join(getDriveInboxDir(), 'FILESHOT_STORAGE.txt'));
+          }
+        },
+        {
+          label: 'Refresh Storage Info',
+          click: () => {
+            refreshStorageUsage({ force: true, reason: 'tray:drive-refresh' }).catch(() => {});
+          }
         }
       ]
     },
@@ -1363,10 +1597,14 @@ ipcMain.handle('get-auth-token', () => {
 
 ipcMain.handle('set-auth-token', (event, token) => {
   store.set('authToken', token);
+  refreshStorageUsage({ force: true, reason: 'auth:set-token' }).catch(() => {});
 });
 
 ipcMain.handle('clear-auth-token', () => {
   store.delete('authToken');
+  storageUsageCache = { data: null, lastFetchMs: 0, lastError: null };
+  writeDriveStorageStatusFile({ info: null, error: null }).catch(() => {});
+  rebuildTrayMenu();
 });
 
 ipcMain.handle('add-recent-upload', (event, upload) => {
@@ -2003,6 +2241,19 @@ ipcMain.handle('upload-zke', async (event, { localId, options, requestId }) => {
 app.whenReady().then(() => {
   createWindow();
   createTray();
+
+  // Keep storage info reasonably fresh (tray + FILESHOT_STORAGE.txt) while logged in.
+  if (store.get('authToken', null)) {
+    refreshStorageUsage({ force: true, reason: 'startup' }).catch(() => {});
+  } else {
+    // Ensure the status file exists with helpful guidance when the drive is enabled.
+    writeDriveStorageStatusFile({ info: null, error: null }).catch(() => {});
+  }
+
+  setInterval(() => {
+    if (!store.get('authToken', null)) return;
+    refreshStorageUsage({ force: true, reason: 'poll' }).catch(() => {});
+  }, 5 * 60 * 1000);
 
   // Windows: enable FileShot Drive by default on first run.
   // (This was the core point of the v1.4.8 update; requiring a manual tray toggle is too easy to miss.)
