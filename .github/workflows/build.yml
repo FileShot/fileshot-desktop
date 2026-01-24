@@ -46,7 +46,10 @@ jobs:
         with:
           name: windows-installer
           path: |
-            dist/**/*
+            dist/*.exe
+            dist/*.exe.blockmap
+            dist/latest.yml
+          if-no-files-found: error
 
   build-macos:
     runs-on: macos-latest
@@ -75,7 +78,12 @@ jobs:
         with:
           name: macos-installer
           path: |
-            dist/**/*
+            dist/*.dmg
+            dist/*.dmg.blockmap
+            dist/*-mac.zip
+            dist/*-mac.zip.blockmap
+            dist/latest-mac.yml
+          if-no-files-found: error
 
   build-linux:
     runs-on: ubuntu-latest
@@ -103,7 +111,12 @@ jobs:
         with:
           name: linux-installer
           path: |
-            dist/**/*
+            dist/*.AppImage
+            dist/*.AppImage.blockmap
+            dist/*.deb
+            dist/*.rpm
+            dist/latest-linux.yml
+          if-no-files-found: error
 
   create-release:
     needs: [build-windows, build-macos, build-linux]
@@ -119,9 +132,20 @@ jobs:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
           draft: ${{ !(github.event_name == 'workflow_dispatch' && inputs.publish_release == true) }}
           fail_on_unmatched_files: true
+          generate_release_notes: true
           files: |
-            windows-installer/**
-            macos-installer/**
-            linux-installer/**
+            windows-installer/*.exe
+            windows-installer/*.exe.blockmap
+            windows-installer/latest.yml
+            macos-installer/*.dmg
+            macos-installer/*.dmg.blockmap
+            macos-installer/*-mac.zip
+            macos-installer/*-mac.zip.blockmap
+            macos-installer/latest-mac.yml
+            linux-installer/*.AppImage
+            linux-installer/*.AppImage.blockmap
+            linux-installer/*.deb
+            linux-installer/*.rpm
+            linux-installer/latest-linux.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
