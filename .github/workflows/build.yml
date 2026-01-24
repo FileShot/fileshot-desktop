@@ -112,7 +112,6 @@ jobs:
           name: linux-installer
           path: |
             dist/*.AppImage
-            dist/*.AppImage.blockmap
             dist/*.deb
             dist/*.rpm
             dist/latest-linux.yml
@@ -143,7 +142,6 @@ jobs:
             macos-installer/*-mac.zip.blockmap
             macos-installer/latest-mac.yml
             linux-installer/*.AppImage
-            linux-installer/*.AppImage.blockmap
             linux-installer/*.deb
             linux-installer/*.rpm
             linux-installer/latest-linux.yml
