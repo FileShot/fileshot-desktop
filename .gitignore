@@ -36,3 +36,8 @@ certificates/
 # Temporary files
 *.tmp
 *.temp
+
+# Local workspace sentinels (not part of the product)
+.terminal_sentinel.txt
+sentinel.txt
+sentinel_cmd.txt
