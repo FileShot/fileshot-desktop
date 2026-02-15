@@ -1,0 +1,568 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FileShot</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- â•â•â• Custom Titlebar â•â•â• -->
+<header class="titlebar" id="titlebar">
+  <div class="titlebar-drag">
+    <img src="../assets/logo.png" alt="FileShot" class="titlebar-logo" height="16" />
+    <span class="titlebar-version" id="titlebarVersion"></span>
+  </div>
+  <div class="titlebar-controls">
+    <button class="tb-btn" id="btnMin" title="Minimize"><svg width="10" height="10" viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor"/></svg></button>
+    <button class="tb-btn" id="btnMax" title="Maximize"><svg width="10" height="10" viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1"/></svg></button>
+    <button class="tb-btn tb-close" id="btnClose" title="Close"><svg width="10" height="10" viewBox="0 0 10 10"><line x1="0" y1="0" x2="10" y2="10" stroke="currentColor" stroke-width="1.2"/><line x1="10" y1="0" x2="0" y2="10" stroke="currentColor" stroke-width="1.2"/></svg></button>
+  </div>
+</header>
+
+<!-- â•â•â• Auth Screen â•â•â• -->
+<div class="screen auth-screen" id="authScreen">
+  <div class="auth-container">
+    <div class="auth-brand">
+      <img src="../assets/logo.png" alt="FileShot" class="auth-logo" />
+      <p class="auth-tagline">Next-Generation Encrypted File Sharing</p>
+    </div>
+    <div class="auth-card glass-card">
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-tab="login">Sign In</button>
+        <button class="auth-tab" data-tab="register">Create Account</button>
+      </div>
+      <form class="auth-form" id="authForm">
+        <div class="form-group">
+          <label for="authEmail">Email</label>
+          <input type="email" id="authEmail" placeholder="you@example.com" required autocomplete="email" />
+        </div>
+        <div class="form-group">
+          <label for="authPassword">Password</label>
+          <input type="password" id="authPassword" placeholder="Enter password" required autocomplete="current-password" />
+        </div>
+        <div class="form-group" id="confirmGroup" hidden>
+          <label for="authConfirm">Confirm Password</label>
+          <input type="password" id="authConfirm" placeholder="Confirm password" autocomplete="new-password" />
+        </div>
+        <div class="auth-error" id="authError" hidden></div>
+        <button type="submit" class="btn btn-primary btn-block" id="authSubmit">
+          <span class="btn-text">Sign In</span>
+          <span class="btn-loader" hidden></span>
+        </button>
+      </form>
+      <div class="auth-divider"><span>or</span></div>
+      <div class="auth-oauth">
+        <button class="btn-oauth btn-google" id="btnGoogleLogin">
+          <svg class="oauth-icon" viewBox="0 0 24 24" width="18" height="18"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+          Continue with Google
+        </button>
+        <button class="btn-oauth btn-github" id="btnGithubLogin">
+          <svg class="oauth-icon" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          Continue with GitHub
+        </button>
+      </div>
+      <div class="auth-footer">
+        <a href="#" id="authForgot">Forgot password?</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- â•â•â• App Screen â•â•â• -->
+<div class="screen app-screen" id="appScreen" hidden>
+
+  <!-- Sidebar -->
+  <nav class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <img src="../assets/logo.png" alt="FileShot" class="sidebar-logo" />
+      <button class="sidebar-collapse-btn" id="sidebarToggle" title="Toggle sidebar">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+    </div>
+
+    <div class="sidebar-nav">
+      <button class="nav-btn active" data-view="dashboard" title="Dashboard">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        <span>Dashboard</span>
+      </button>
+      <button class="nav-btn" data-view="upload" title="Upload Files">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <span>Upload</span>
+      </button>
+      <button class="nav-btn" data-view="files" title="My Files">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        <span>My Files</span>
+      </button>
+
+      <div class="nav-divider"></div>
+
+      <button class="nav-btn" data-view="vault" title="Local Vault">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <span>Local Vault</span>
+      </button>
+      <button class="nav-btn" data-view="shredder" title="File Shredder">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+        <span>Shredder</span>
+      </button>
+      <button class="nav-btn" data-view="drive" title="Virtual Drive">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+        <span>Virtual Drive</span>
+      </button>
+
+      <div class="nav-divider"></div>
+
+      <button class="nav-btn" data-view="settings" title="Settings">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.32 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span>Settings</span>
+      </button>
+    </div>
+
+    <!-- Sidebar Footer: Storage + User -->
+    <div class="sidebar-footer">
+      <div class="storage-mini" id="storageMini">
+        <div class="storage-mini-bar"><div class="storage-mini-fill" id="storageFill"></div></div>
+        <span class="storage-mini-text" id="storageText">Loading...</span>
+      </div>
+      <div class="user-mini" id="userMini">
+        <div class="user-avatar" id="userAvatar">U</div>
+        <span class="user-email" id="userEmail">user@email.com</span>
+        <button class="btn-icon" id="btnLogout" title="Sign out">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main Content -->
+  <main class="content" id="contentArea">
+
+    <!-- â•â•â• Global Drop Zone â•â•â• -->
+    <div class="drop-overlay" id="dropOverlay" hidden>
+      <div class="drop-overlay-inner">
+        <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#fa3800" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <p>Drop files to upload</p>
+      </div>
+    </div>
+
+    <!-- â•â•â• Dashboard View â•â•â• -->
+    <section class="view" id="view-dashboard">
+      <div class="view-header">
+        <h2>Dashboard</h2>
+        <span class="tier-badge" id="tierBadge">Free</span>
+      </div>
+      <div class="dashboard-grid">
+        <!-- Storage Card -->
+        <div class="dash-card glass-card storage-card">
+          <div class="dash-card-header">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fa3800" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+            <h3>Storage</h3>
+          </div>
+          <div class="storage-visual">
+            <div class="storage-ring" id="storageRing">
+              <svg viewBox="0 0 120 120">
+                <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="10"/>
+                <circle cx="60" cy="60" r="52" fill="none" stroke="#fa3800" stroke-width="10" stroke-dasharray="326.73" stroke-dashoffset="326.73" stroke-linecap="round" transform="rotate(-90 60 60)" id="storageArc"/>
+              </svg>
+              <div class="storage-ring-label">
+                <span class="storage-percent" id="storagePercent">0%</span>
+                <span class="storage-of">used</span>
+              </div>
+            </div>
+            <div class="storage-details">
+              <div class="storage-stat"><span class="stat-label">Used</span><span class="stat-value" id="storageUsed">0 B</span></div>
+              <div class="storage-stat"><span class="stat-label">Available</span><span class="stat-value" id="storageAvail">0 B</span></div>
+              <div class="storage-stat"><span class="stat-label">Total</span><span class="stat-value" id="storageTotal">0 B</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick Actions Card -->
+        <div class="dash-card glass-card">
+          <div class="dash-card-header">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fa3800" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            <h3>Quick Actions</h3>
+          </div>
+          <div class="quick-actions">
+            <button class="qa-btn" data-action="upload">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              <span>Upload Files</span>
+            </button>
+            <button class="qa-btn" data-action="vault">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              <span>Add to Vault</span>
+            </button>
+            <button class="qa-btn" data-action="drive">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+              <span>Virtual Drive</span>
+            </button>
+            <button class="qa-btn" data-action="website">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              <span>Open Website</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Recent Files Card -->
+        <div class="dash-card glass-card recent-card">
+          <div class="dash-card-header">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fa3800" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <h3>Recent Files</h3>
+            <button class="btn btn-ghost btn-sm" id="btnViewAllFiles">View All</button>
+          </div>
+          <div class="recent-list" id="recentFilesList">
+            <div class="empty-state small">
+              <p>No files yet</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Account Card -->
+        <div class="dash-card glass-card">
+          <div class="dash-card-header">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fa3800" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <h3>Account</h3>
+          </div>
+          <div class="account-info">
+            <div class="info-row"><span class="info-label">Email</span><span class="info-value" id="accountEmail">â€”</span></div>
+            <div class="info-row"><span class="info-label">Plan</span><span class="info-value" id="accountPlan">Free</span></div>
+            <div class="info-row"><span class="info-label">Files</span><span class="info-value" id="accountFileCount">0</span></div>
+            <a href="#" class="btn btn-ghost btn-sm" id="btnUpgrade" style="margin-top:12px">Upgrade Plan</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- â•â•â• Upload View â•â•â• -->
+    <section class="view" id="view-upload" hidden>
+      <div class="view-header">
+        <h2>Upload Center</h2>
+      </div>
+      <div class="upload-zone" id="uploadZone">
+        <div class="upload-zone-inner">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(249,115,22,0.6)" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <p class="upload-headline">Drag files here or click to browse</p>
+          <p class="upload-subtitle">Files are encrypted with AES-256 before upload (Zero-Knowledge)</p>
+          <button class="btn btn-primary" id="btnPickUpload">Select Files</button>
+        </div>
+      </div>
+      <div class="upload-queue" id="uploadQueue" hidden>
+        <div class="upload-queue-header">
+          <h3>Upload Queue</h3>
+          <span class="upload-summary" id="uploadSummary">0 files</span>
+        </div>
+        <div class="upload-list" id="uploadList"></div>
+      </div>
+    </section>
+
+    <!-- â•â•â• My Files View â•â•â• -->
+    <section class="view" id="view-files" hidden>
+      <div class="view-header">
+        <h2>My Files</h2>
+        <div class="view-actions">
+          <div class="search-box">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="filesSearch" placeholder="Search files..." />
+          </div>
+          <div class="view-toggle">
+            <button class="btn-icon active" id="filesListView" title="List view"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg></button>
+            <button class="btn-icon" id="filesGridView" title="Grid view"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></button>
+          </div>
+          <button class="btn btn-primary btn-sm" id="btnRefreshFiles">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            Refresh
+          </button>
+        </div>
+      </div>
+      <!-- Folder Bar -->
+      <div class="folder-bar" id="folderBar">
+        <button class="folder-tab active" data-folder="">All Files</button>
+        <div class="folder-tabs" id="folderTabs"></div>
+        <button class="btn btn-ghost btn-sm" id="btnNewFolder" title="New folder">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          New Folder
+        </button>
+      </div>
+      <div class="files-container" id="filesContainer">
+        <div class="files-list" id="filesList"></div>
+        <div class="empty-state" id="filesEmpty" hidden>
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          <p>No files found</p>
+          <button class="btn btn-primary btn-sm" data-action="upload">Upload your first file</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- â•â•â• Local Vault View â•â•â• -->
+    <section class="view" id="view-vault" hidden>
+      <div class="view-header">
+        <h2>Local Vault</h2>
+        <div class="view-actions">
+          <button class="btn btn-primary btn-sm" id="btnVaultAdd">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Add Files
+          </button>
+        </div>
+      </div>
+      <div class="vault-info glass-card">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fa3800" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        <p>Files are encrypted with AES-256-GCM and stored locally. You must remember your password to decrypt them.</p>
+      </div>
+      <div class="vault-list" id="vaultList"></div>
+      <div class="empty-state" id="vaultEmpty" hidden>
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <p>Your vault is empty</p>
+        <button class="btn btn-primary btn-sm" id="btnVaultAddEmpty">Add files to vault</button>
+      </div>
+    </section>
+
+    <!-- â•â•â• Shredder View â•â•â• -->
+    <section class="view" id="view-shredder" hidden>
+      <div class="view-header">
+        <h2>Secure File Shredder</h2>
+      </div>
+      <div class="shred-layout">
+        <div class="shred-config glass-card">
+          <h3>Shred Method</h3>
+          <div class="radio-group">
+            <label class="radio-item"><input type="radio" name="shredMethod" value="simple" checked /><span class="radio-check"></span><div><strong>Simple (1 pass)</strong><small>Fast overwrite â€” good for most uses</small></div></label>
+            <label class="radio-item"><input type="radio" name="shredMethod" value="dod" /><span class="radio-check"></span><div><strong>DoD 5220.22-M (7 passes)</strong><small>US Department of Defense standard</small></div></label>
+            <label class="radio-item"><input type="radio" name="shredMethod" value="gutmann" /><span class="radio-check"></span><div><strong>Gutmann (35 passes)</strong><small>Maximum security â€” very slow</small></div></label>
+          </div>
+
+          <h3 style="margin-top:24px">Quick Targets</h3>
+          <div class="check-group">
+            <label class="check-item"><input type="checkbox" id="shredDownloads" /><span class="check-box"></span>Downloads folder</label>
+            <label class="check-item"><input type="checkbox" id="shredTemp" /><span class="check-box"></span>Temp files</label>
+            <label class="check-item"><input type="checkbox" id="shredBrowser" /><span class="check-box"></span>Browser cache</label>
+          </div>
+
+          <h3 style="margin-top:24px">Custom Paths</h3>
+          <div class="shred-paths" id="shredPaths">
+            <div class="empty-hint">No custom paths added</div>
+          </div>
+          <div class="shred-path-actions">
+            <button class="btn btn-ghost btn-sm" id="btnShredAddFiles">Add Files</button>
+            <button class="btn btn-ghost btn-sm" id="btnShredAddFolder">Add Folder</button>
+          </div>
+
+          <button class="btn btn-danger btn-block" id="btnShredStart" style="margin-top:24px">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            Start Shredding
+          </button>
+        </div>
+
+        <div class="shred-progress glass-card" id="shredProgress" hidden>
+          <h3>Shred Progress</h3>
+          <div class="progress-bar"><div class="progress-fill" id="shredFill"></div></div>
+          <div class="shred-stats">
+            <span id="shredStatus">Preparing...</span>
+            <span id="shredCount">0 / 0</span>
+          </div>
+          <div class="shred-log" id="shredLog"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- â•â•â• Virtual Drive View â•â•â• -->
+    <section class="view" id="view-drive" hidden>
+      <div class="view-header">
+        <h2>FileShot Virtual Drive</h2>
+      </div>
+      <div class="drive-layout">
+        <div class="drive-hero glass-card">
+          <div class="drive-icon">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#fa3800" stroke-width="1.2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+          </div>
+          <h3>Cloud Drive in Your File Explorer</h3>
+          <p>Mount a virtual drive that mirrors your FileShot cloud storage. Drag files in to upload, open files to download and decrypt â€” all from Windows Explorer.</p>
+          <div class="drive-features">
+            <div class="drive-feature"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Shows your tier's total capacity</div>
+            <div class="drive-feature"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Auto-upload on file drop</div>
+            <div class="drive-feature"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Zero-knowledge encryption</div>
+            <div class="drive-feature"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Appears as a real drive letter</div>
+          </div>
+        </div>
+
+        <div class="drive-controls glass-card">
+          <h3>Drive Settings</h3>
+          <div class="drive-status-row">
+            <span class="drive-status-label">Status</span>
+            <span class="drive-status-value" id="driveStatusText">Checking...</span>
+          </div>
+          <div class="drive-status-row">
+            <span class="drive-status-label">WinFsp</span>
+            <span class="drive-status-value" id="driveWinfspText">Checking...</span>
+          </div>
+          <div class="drive-status-row">
+            <span class="drive-status-label">Drive Letter</span>
+            <div class="drive-letter-select">
+              <select id="driveLetter">
+                <option value="D">D:</option><option value="E">E:</option><option value="F" selected>F:</option>
+                <option value="G">G:</option><option value="H">H:</option><option value="I">I:</option>
+                <option value="J">J:</option><option value="K">K:</option><option value="L">L:</option>
+                <option value="M">M:</option><option value="N">N:</option><option value="O">O:</option>
+                <option value="P">P:</option><option value="Q">Q:</option><option value="R">R:</option>
+                <option value="S">S:</option><option value="T">T:</option><option value="U">U:</option>
+                <option value="V">V:</option><option value="W">W:</option><option value="X">X:</option>
+                <option value="Y">Y:</option><option value="Z">Z:</option>
+              </select>
+            </div>
+          </div>
+          <div class="drive-actions">
+            <button class="btn btn-primary" id="btnDriveMount">Mount Drive</button>
+            <button class="btn btn-danger" id="btnDriveUnmount" hidden>Unmount Drive</button>
+            <button class="btn btn-ghost" id="btnDriveInstallWinfsp" hidden>Install WinFsp</button>
+          </div>
+          <div class="drive-note" id="driveNote"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- â•â•â• Settings View â•â•â• -->
+    <section class="view" id="view-settings" hidden>
+      <div class="view-header">
+        <h2>Settings</h2>
+      </div>
+      <div class="settings-layout">
+        <div class="settings-section glass-card">
+          <h3>General</h3>
+          <div class="setting-row">
+            <div class="setting-info"><strong>Start on login</strong><small>Launch FileShot when Windows starts</small></div>
+            <label class="toggle"><input type="checkbox" id="setStartOnLogin" /><span class="toggle-slider"></span></label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info"><strong>Minimize to tray</strong><small>Keep running in the system tray on close</small></div>
+            <label class="toggle"><input type="checkbox" id="setMinToTray" /><span class="toggle-slider"></span></label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info"><strong>Notifications</strong><small>Show OS notifications for uploads and events</small></div>
+            <label class="toggle"><input type="checkbox" id="setNotifications" checked /><span class="toggle-slider"></span></label>
+          </div>
+        </div>
+
+        <div class="settings-section glass-card">
+          <h3>Downloads</h3>
+          <div class="setting-row">
+            <div class="setting-info"><strong>Download location</strong><small id="setDownloadPathDisplay">Default downloads folder</small></div>
+            <button class="btn btn-ghost btn-sm" id="btnSetDownloadPath">Change</button>
+          </div>
+        </div>
+
+        <div class="settings-section glass-card">
+          <h3>Encryption</h3>
+          <div class="setting-row">
+            <div class="setting-info"><strong>Default upload mode</strong><small>How files are encrypted before upload</small></div>
+            <select id="setEncryption" class="select-sm">
+              <option value="zke" selected>Zero-Knowledge (recommended)</option>
+              <option value="standard">Standard</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="settings-section glass-card">
+          <h3>Account</h3>
+          <div class="setting-row">
+            <div class="setting-info"><strong>Change password</strong><small>Update your FileShot account password</small></div>
+            <button class="btn btn-ghost btn-sm" id="btnChangePassword">Change</button>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info"><strong>Manage subscription</strong><small>View or upgrade your plan</small></div>
+            <button class="btn btn-ghost btn-sm" id="btnManageSub">Manage</button>
+          </div>
+        </div>
+
+        <div class="settings-section glass-card">
+          <h3>About</h3>
+          <div class="about-info">
+            <div class="info-row"><span class="info-label">Version</span><span class="info-value" id="aboutVersion">2.0.0</span></div>
+            <div class="info-row"><span class="info-label">Platform</span><span class="info-value" id="aboutPlatform">â€”</span></div>
+            <div class="info-row"><span class="info-label">Electron</span><span class="info-value" id="aboutElectron">â€”</span></div>
+          </div>
+          <div style="margin-top:16px">
+            <a href="#" class="btn btn-ghost btn-sm" id="btnAboutWebsite">fileshot.io</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- â•â•â• Share Modal â•â•â• -->
+<div class="modal-backdrop" id="shareModal" hidden>
+  <div class="modal glass-card">
+    <div class="modal-header">
+      <h3>Share File</h3>
+      <button class="btn-icon modal-close" id="shareModalClose">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="share-file-name" id="shareFileName">file.txt</div>
+      <div class="share-link-row">
+        <input type="text" readonly class="share-link-input" id="shareLinkInput" />
+        <button class="btn btn-primary btn-sm" id="shareCopyBtn">Copy</button>
+      </div>
+      <div class="share-qr" id="shareQR">
+        <div class="qr-loading">Loading QR code...</div>
+      </div>
+      <div class="share-options">
+        <div class="share-option">
+          <label>Expiration</label>
+          <select id="shareExpiry">
+            <option value="">No expiration</option>
+            <option value="1">1 hour</option>
+            <option value="24">24 hours</option>
+            <option value="168">7 days</option>
+            <option value="720">30 days</option>
+          </select>
+        </div>
+        <div class="share-option">
+          <label>Max Downloads</label>
+          <select id="shareMaxDl">
+            <option value="">Unlimited</option>
+            <option value="1">1 download</option>
+            <option value="5">5 downloads</option>
+            <option value="10">10 downloads</option>
+            <option value="50">50 downloads</option>
+            <option value="100">100 downloads</option>
+          </select>
+        </div>
+        <div class="share-option">
+          <label>Password Protection</label>
+          <input type="text" id="sharePassword" placeholder="Leave empty for no password" />
+        </div>
+      </div>
+      <button class="btn btn-primary btn-block" id="shareUpdateBtn">Update Share Settings</button>
+    </div>
+  </div>
+</div>
+
+<!-- â•â•â• Vault Password Modal â•â•â• -->
+<div class="modal-backdrop" id="vaultPwModal" hidden>
+  <div class="modal glass-card modal-sm">
+    <div class="modal-header">
+      <h3 id="vaultPwTitle">Enter Password</h3>
+      <button class="btn-icon modal-close" id="vaultPwClose">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p id="vaultPwDesc" class="modal-desc">Enter the encryption password for this file.</p>
+      <div class="form-group">
+        <input type="password" id="vaultPwInput" placeholder="Password" autocomplete="off" />
+      </div>
+      <div class="form-group" id="vaultPwConfirmGroup" hidden>
+        <input type="password" id="vaultPwConfirm" placeholder="Confirm password" autocomplete="off" />
+      </div>
+      <div class="auth-error" id="vaultPwError" hidden></div>
+      <button class="btn btn-primary btn-block" id="vaultPwSubmit">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- â•â•â• Toast Container â•â•â• -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
+

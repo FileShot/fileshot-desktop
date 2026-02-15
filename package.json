@@ -1,0 +1,88 @@
+{
+  "name": "fileshot-desktop-v2",
+  "version": "2.0.0",
+  "description": "FileShot Desktop V2 — Next-Gen Encrypted File Sharing",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "keywords": ["file-sharing", "encryption", "zero-knowledge", "privacy", "fileshot", "cloud-drive"],
+  "author": {
+    "name": "FileShot.io",
+    "email": "admin@fileshot.io",
+    "url": "https://fileshot.io"
+  },
+  "license": "MIT",
+  "build": {
+    "appId": "io.fileshot.desktop",
+    "productName": "FileShot",
+    "copyright": "Copyright © 2026 FileShot.io",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "utils/**/*",
+      "renderer/**/*",
+      "assets/**/*",
+      "drive/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "build/icon.ico",
+      "artifactName": "FileShot-Setup-${version}.${ext}",
+      "publisherName": "FileShot.io",
+      "verifyUpdateCodeSignature": false,
+      "sign": null
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "FileShot"
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "build/icons",
+      "category": "Utility"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "fileshot",
+      "repo": "fileshot-desktop"
+    }
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "chokidar": "^3.6.0",
+    "electron-updater": "^6.3.0",
+    "form-data": "^4.0.0",
+    "archiver": "^7.0.1",
+    "extract-zip": "^2.0.1"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.0"
+  }
+}
