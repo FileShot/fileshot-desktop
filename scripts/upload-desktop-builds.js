@@ -124,7 +124,10 @@ async function uploadOne({ token, filePath, desiredFolderId = null }) {
   if (hasBlockedExtension(originalName)) {
     tmpZip = await zipSingleFile(filePath, originalName);
     uploadSourcePath = tmpZip;
-    uploadFileName = `${originalName}.zip`;
+    // IMPORTANT: backend blocks if the *stored name* contains blocked extensions
+    // anywhere in the string. So avoid names like "setup.exe.zip".
+    const base = path.parse(originalName).name;
+    uploadFileName = `${base}.zip`;
     wasZipped = true;
   }
 
