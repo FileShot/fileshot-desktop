@@ -1,193 +1,188 @@
-# FileShot Desktop App
+﻿# FileShot Desktop App
 
-Official desktop application for FileShot.io - Fast, Private File Sharing with Zero-Knowledge Encryption.
+Official desktop application for [FileShot.io](https://fileshot.io) — Fast, Private File Sharing with Zero-Knowledge Encryption.
+
+**Current version: 1.4.10** | [Download latest release](https://github.com/FileShot/fileshot-desktop/releases/latest) | [Website](https://fileshot.io)
+
+---
+
+<!-- Screenshot placeholder: upload UI with tray menu visible -->
+<!-- Add screenshot here once available: docs/screenshot-app.png -->
+
+---
 
 ## Features
 
-- 🖥️ **Native Desktop Experience** - Full-featured desktop app for Windows, Mac, and Linux
-- 📤 **Drag & Drop Upload** - Drop files on tray icon for instant upload
-- 🔔 **System Tray Integration** - Quick access from system tray
-- 🔄 **Background Uploads** - Upload files in the background
-- 🔐 **Secure & Private** - Same zero-knowledge encryption as web app
-- 🚀 **Auto-Updates** - Automatic updates when new versions are available
-- 📋 **Recent Uploads** - Quick access to recently uploaded files
-- ⚡ **Fast & Lightweight** - Optimized for performance
+### Core
+- Native desktop experience for Windows, macOS, and Linux
+- Drag-and-drop files onto the tray icon for instant upload
+- System tray integration — FileShot stays out of your way until you need it
+- Background uploads — queue files and continue working
+- The same zero-knowledge AES-256-GCM encryption as the web app
+
+### FileShot Drive (Windows, v1.3+)
+- Mounts a real virtual drive letter (e.g. `F:\FileShot\`) via WinFsp
+- Drag files into the drive folder — they upload automatically
+- Quota and usage stats shown in the Metrics dashboard
+- Requires [WinFsp](https://winfsp.dev/) installed
+
+### Metrics Dashboard (v1.2+)
+- Upload history, bandwidth used, files shared
+- Local-only — no data sent to any server
+
+### Offline Mode (v1.2+)
+- Local-first UI bundled inside the app
+- Works without internet; queued uploads sync when connection resumes
+
+### Other
+- Auto-updates on startup — no manual installer downloads
+- Recent uploads list with one-click copy of share link
+- Clipboard integration
+- Context isolation, CSP headers, node integration disabled (secure by default)
+
+---
 
 ## Installation
 
 ### Windows
-1. Download `FileShot-Setup-1.0.0.exe`
-2. Run the installer
-3. FileShot will launch automatically after installation
+1. [Download `FileShot-Setup-1.4.10.exe`](https://github.com/FileShot/fileshot-desktop/releases/latest)
+2. Run the installer — no admin rights required
+3. FileShot launches automatically and appears in the system tray
+
+> Windows SmartScreen may warn "Windows protected your PC" because the app is currently unsigned. Click **More info → Run anyway**. After approximately 100 downloads from different IPs, Windows SmartScreen trust builds automatically.
 
 ### macOS
-1. Download `FileShot-1.0.0.dmg`
-2. Open the DMG file
-3. Drag FileShot to Applications folder
-4. Launch FileShot from Applications
+1. [Download `FileShot-1.4.10.dmg`](https://github.com/FileShot/fileshot-desktop/releases/latest)
+2. Open the DMG and drag FileShot to Applications
+3. Right-click → Open if Gatekeeper blocks it
 
 ### Linux
-1. Download `FileShot-1.0.0.AppImage`
-2. Make it executable: `chmod +x FileShot-1.0.0.AppImage`
-3. Run: `./FileShot-1.0.0.AppImage`
+1. [Download `FileShot-1.4.10.AppImage`](https://github.com/FileShot/fileshot-desktop/releases/latest)
+2. `chmod +x FileShot-1.4.10.AppImage && ./FileShot-1.4.10.AppImage`
+
+---
+
+## FileShot Drive Setup (Windows)
+
+The FileShot Drive requires WinFsp, a free Windows file system driver:
+
+1. Download and install [WinFsp](https://winfsp.dev/rel/) (free, open source)
+2. Open FileShot Desktop
+3. Go to Settings → Drive → Enable FileShot Drive
+4. A drive letter (default: `F:`) mounts as `FileShot Drive`
+5. Drop any file into `F:\` — it encrypts and uploads automatically
+
+---
 
 ## Development
 
 ### Prerequisites
-- Node.js 18+ 
-- npm or yarn
+- Node.js 18+
+- npm
 
 ### Setup
+
 ```bash
 # Install dependencies
 npm install
 
-# Run in development mode
+# Run in development mode (connects to localhost:3000 API)
 npm run dev
 
-# Build for production
-npm run build
+# Run in production mode (connects to api.fileshot.io)
+npm run start
+```
 
-# Build for specific platform
-npm run build:win    # Windows
-npm run build:mac    # macOS
-npm run build:linux  # Linux
+### Build
+
+```bash
+npm run build:win    # Windows NSIS installer (.exe)
+npm run build:mac    # macOS DMG
+npm run build:linux  # Linux AppImage
 ```
 
 ### Project Structure
+
 ```
 desktop-app/
-├── main.js          # Main process (Electron)
-├── preload.js       # Preload script (security bridge)
-├── renderer/        # Renderer process (UI)
-├── assets/          # Icons and images
-├── build/           # Build resources
-└── package.json     # Dependencies and build config
+├── main.js              # Main process — tray, windows, upload queue, drive
+├── preload.js           # Secure IPC bridge (context isolation)
+├── renderer/
+│   ├── local/           # Local-first UI (v1.2+, always available offline)
+│   ├── site/            # Bundled web frontend fallback
+│   ├── metrics/         # Metrics dashboard UI
+│   └── offline.html     # Offline landing page
+├── utils/
+│   └── zke-stream.js    # Streaming zero-knowledge encryption for large files
+├── assets/              # App icons
+├── build/               # Build resources (icons, NSIS config)
+└── package.json
 ```
 
-## Code Signing
+---
 
-### Current Status (Unsigned)
-The app is currently **unsigned** which may trigger Windows SmartScreen warnings. This is normal for new applications.
+## Security Notes
 
-### Getting a Code Signing Certificate
+- Context isolation: enabled
+- Node integration in renderer: disabled
+- Web security: enabled
+- Preload script as the only IPC bridge
+- CSP headers enforced on all windows
+- External links open in the system browser, not inside the app
+- The app is currently **unsigned**. Code signing with an EV certificate is planned. See [CODE_SIGNING_GUIDE.md](CODE_SIGNING_GUIDE.md).
 
-**For Windows:**
-1. Purchase certificate from:
-   - DigiCert ($474/year) - Recommended
-   - Sectigo ($199/year)
-   - SSL.com ($199/year)
-
-2. Certificate types:
-   - **Standard Code Signing** - $199-474/year
-   - **EV Code Signing** - $299-599/year (instant SmartScreen trust)
-
-3. Setup:
-   ```bash
-   # Install certificate
-   # Add to package.json build config:
-   "win": {
-     "certificateFile": "path/to/cert.pfx",
-     "certificatePassword": "your-password",
-     "signingHashAlgorithms": ["sha256"],
-     "sign": "./sign.js"
-   }
-   ```
-
-**For macOS:**
-1. Join Apple Developer Program ($99/year)
-2. Create Developer ID certificate
-3. Configure in package.json:
-   ```json
-   "mac": {
-     "identity": "Developer ID Application: Your Name (TEAM_ID)"
-   }
-   ```
-
-### Temporary Workaround (Self-Signed)
-Users can bypass SmartScreen warning:
-1. Click "More info"
-2. Click "Run anyway"
-
-After ~100 downloads, Windows SmartScreen will automatically trust the app.
-
-## Security
-
-- ✅ Context isolation enabled
-- ✅ Node integration disabled
-- ✅ Web security enabled
-- ✅ Preload script for safe IPC
-- ✅ CSP headers enforced
-- ✅ External links open in browser
+---
 
 ## Auto-Updates
 
-The app checks for updates on startup and notifies users when updates are available.
+The app checks for updates on startup via GitHub Releases. When an update is available, a notification appears in the tray — click to install. No manual downloads required.
 
-Update server: GitHub Releases (configured in package.json)
-
-## Building Installers
-
-### Windows (NSIS)
-```bash
-npm run build:win
-```
-Output: `dist/FileShot-Setup-1.0.0.exe` (one-click installer)
-
-### macOS (DMG)
-```bash
-npm run build:mac
-```
-Output: `dist/FileShot-1.0.0.dmg`
-
-### Linux (AppImage)
-```bash
-npm run build:linux
-```
-Output: `dist/FileShot-1.0.0.AppImage`
-
-## Troubleshooting
-
-### Windows SmartScreen Warning
-**Issue:** "Windows protected your PC" warning
-
-**Solution:** 
-- Click "More info" → "Run anyway"
-- This is normal for unsigned apps
-- Will disappear after getting code signing certificate
-
-### macOS Gatekeeper Warning
-**Issue:** "FileShot cannot be opened because it is from an unidentified developer"
-
-**Solution:**
-- Right-click app → Open
-- Click "Open" in dialog
-- Or: System Preferences → Security → "Open Anyway"
-
-### Linux Permission Denied
-**Issue:** Cannot execute AppImage
-
-**Solution:**
-```bash
-chmod +x FileShot-1.0.0.AppImage
-```
+---
 
 ## Support
 
 - Website: https://fileshot.io
 - Email: admin@fileshot.io
-- GitHub: https://github.com/FileShot/fileshot-desktop
+- Issues: https://github.com/FileShot/fileshot-desktop/issues
+
+---
+
+## Related Repositories
+
+- [FileShotZKE](https://github.com/FileShot/FileShotZKE) — Standalone zero-knowledge encryption library (AES-256-GCM, browser)
+- [FileShot Chrome Extension](https://chromewebstore.google.com/detail/ppbbdbmpeckkimfplcgodkeejmjakjik) — MV3 extension for capturing and uploading directly from any webpage
+
+---
 
 ## License
 
-MIT License - See LICENSE file for details
+MIT — see LICENSE.
+
+---
 
 ## Changelog
 
-### Version 1.0.0 (2025-01-XX)
+### v1.4.10 (2026)
+- Stability improvements and bug fixes
+
+### v1.4.x (2025-2026)
+- FileShot Drive improvements and quota display
+- Metrics dashboard refinements
+- Streaming ZKE encryption for very large files
+
+### v1.3.0 (2025)
+- FileShot Drive: WinFsp virtual drive letter mount
+- Automatic upload on file drop into drive folder
+
+### v1.2.0 (2025)
+- Metrics dashboard (local upload history, bandwidth stats)
+- Offline mode with locally bundled UI
+- Upload queue with background sync
+
+### v1.0.0 (2025)
 - Initial release
 - System tray integration
-- Drag & drop upload
+- Drag-and-drop upload
 - Background uploads
-- Auto-updates
-- Cross-platform support (Windows, Mac, Linux)
+- Auto-updates via GitHub Releases
+- Cross-platform: Windows, macOS, Linux
