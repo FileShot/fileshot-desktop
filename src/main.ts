@@ -254,15 +254,17 @@ function sidebarNavItems(): string {
     return `${manage}${list}${isProOrAbove() ? `<button class="btn btn-primary btn-sm" id="newInboxBtn" style="margin:12px 8px">+ New inbox</button>` : `<p class="inbox-gate" style="padding:8px 12px;font-size:12px;color:var(--t3)">Receive Inbox requires Pro.</p><button class="btn btn-primary btn-sm upgrade-btn" data-upgrade="pro" style="margin:8px">Upgrade to Pro</button>`}`;
   }
   if (state.section === "chat") {
-    const rooms = state.chatRooms as Array<{ roomId?: string; name?: string; messageCount?: number }>;
+    const rooms = state.chatRooms as Array<{ roomId?: string; name?: string; messageCount?: number; isOwner?: boolean }>;
     const create = `<div class="nav-item ${!state.activeChatRoom ? "active" : ""}" data-chat-room="">${icon("chat", 18)}<span>All chats</span></div>`;
     const list = rooms
       .map((r) => {
         const rid = r.roomId || "";
         const active = state.activeChatRoom === rid;
+        const owner = r.isOwner === true;
+        const actionTitle = owner ? "Delete chat" : "Leave chat";
         return `<div class="nav-item-wrap">
           <div class="nav-item ${active ? "active" : ""}" data-chat-room="${escapeHtml(rid)}">${icon("chat", 18)}<span>${escapeHtml(r.name || rid || "Chat")}</span>${r.messageCount ? `<span class="nav-badge">${r.messageCount}</span>` : ""}</div>
-          <button type="button" class="nav-item-action" data-chat-delete="${escapeHtml(rid)}" title="Delete chat">${icon("trash", 14)}</button>
+          <button type="button" class="nav-item-action" data-chat-delete="${escapeHtml(rid)}" data-chat-owner="${owner ? "1" : "0"}" title="${actionTitle}">${icon("trash", 14)}</button>
         </div>`;
       })
       .join("");
@@ -502,14 +504,28 @@ function embedSiteUrl(): string | null {
   return path ? `https://fileshot.io${path}` : null;
 }
 
+let lastEmbedUrl: string | null = null;
+
 async function syncEmbedWebview() {
   const url = embedSiteUrl();
   if (!url) {
-    await api.embedClose();
+    if (lastEmbedUrl !== null) {
+      await api.embedClose();
+      lastEmbedUrl = null;
+    }
+    return;
+  }
+  if (url === lastEmbedUrl) {
+    try {
+      await api.embedResize();
+    } catch (e) {
+      log(`embed resize failed: ${e}`);
+    }
     return;
   }
   try {
     await api.embedOpen(url);
+    lastEmbedUrl = url;
     await api.embedResize();
   } catch (e) {
     log(`embed sync failed: ${e}`);
@@ -1083,19 +1099,23 @@ function bindAppEvents() {
   document.querySelectorAll("[data-chat-delete]").forEach((el) => {
     el.addEventListener("click", async (e) => {
       e.stopPropagation();
-      const roomId = (el as HTMLElement).dataset.chatDelete;
+      const btn = el as HTMLElement;
+      const roomId = btn.dataset.chatDelete;
       if (!roomId) return;
+      const isOwner = btn.dataset.chatOwner === "1";
       const ok = await showConfirm({
-        title: "Delete chat",
-        message: "Remove this chat from your list? Messages are kept for other participants.",
-        confirmLabel: "Delete",
+        title: isOwner ? "Delete chat" : "Leave chat",
+        message: isOwner
+          ? "Delete this chat for everyone? This cannot be undone."
+          : "Remove this chat from your list? Other participants keep the room.",
+        confirmLabel: isOwner ? "Delete" : "Leave",
         danger: true,
       });
       if (!ok) return;
       try {
         await api.chatDelete(roomId);
         if (state.activeChatRoom === roomId) state.activeChatRoom = null;
-        showToast("Chat deleted", "success");
+        showToast(isOwner ? "Chat deleted" : "Left chat", "success");
         await loadSectionData();
         render();
       } catch (err) {
