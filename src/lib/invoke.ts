@@ -52,6 +52,13 @@ export interface UsageInfo {
   tier: string;
 }
 
+export interface EmbedBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export const api = {
   authLogin: (email: string, password: string) =>
     invoke<Record<string, unknown>>("auth_login", { email, password }),
@@ -99,9 +106,13 @@ export const api = {
   inboxCreate: (title: string, description?: string) =>
     invoke<Record<string, unknown>>("inbox_create", { title, description }),
   inboxDelete: (requestId: string) => invoke<void>("inbox_delete", { requestId }),
-  embedOpen: (url: string) => invoke<void>("embed_open", { url }),
+  embedOpen: (url: string, bounds: EmbedBounds) =>
+    invoke<void>("embed_open", { url, x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }),
+  embedMove: (url: string, bounds: EmbedBounds) =>
+    invoke<void>("embed_move", { url, x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }),
   embedClose: () => invoke<void>("embed_close"),
-  embedResize: () => invoke<void>("embed_resize"),
+  embedResize: (bounds: EmbedBounds) =>
+    invoke<void>("embed_resize", { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }),
   previewThumb: (fileId: string, isZeroKnowledge: boolean) =>
     invoke<string | null>("preview_thumb", { fileId, isZeroKnowledge }),
   fileShareUrl: (fileId: string, customLink?: string | null) =>

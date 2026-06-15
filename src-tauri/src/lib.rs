@@ -251,8 +251,29 @@ async fn inbox_delete(ctx: State<'_, AppCtx>, request_id: String) -> Result<(), 
 }
 
 #[tauri::command]
-async fn embed_open(ctx: State<'_, AppCtx>, app: AppHandle, url: String) -> Result<(), String> {
-    embed::embed_open(&app, &ctx.state, &url)
+async fn embed_open(
+    ctx: State<'_, AppCtx>,
+    app: AppHandle,
+    url: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    embed::embed_open(&app, &ctx.state, &url, x, y, width, height)
+}
+
+#[tauri::command]
+async fn embed_move(
+    ctx: State<'_, AppCtx>,
+    app: AppHandle,
+    url: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    embed::embed_move(&app, &ctx.state, &url, x, y, width, height)
 }
 
 #[tauri::command]
@@ -284,13 +305,13 @@ async fn chat_delete(ctx: State<'_, AppCtx>, room_id: String) -> Result<(), Stri
 }
 
 #[tauri::command]
-fn embed_resize(app: AppHandle) {
-    embed::embed_resize(&app);
+fn embed_resize(app: AppHandle, x: f64, y: f64, width: f64, height: f64) {
+    embed::embed_resize(&app, x, y, width, height);
 }
 
 #[tauri::command]
-async fn chat_open(ctx: State<'_, AppCtx>, app: AppHandle) -> Result<(), String> {
-    embed::embed_open(&app, &ctx.state, "https://fileshot.io/chat.html?embed=1")
+async fn chat_open(_ctx: State<'_, AppCtx>, _app: AppHandle) -> Result<(), String> {
+    Ok(())
 }
 
 #[tauri::command]
@@ -646,6 +667,7 @@ pub fn run() {
         })
         .setup(move |app| {
             load_session(app.handle(), &state);
+            embed::destroy_native_embed(app.handle());
             setup_tray(app.handle())?;
             let settings = state.settings.read().clone();
             let _ = sync_autostart(app.handle(), settings.autostart);
@@ -691,6 +713,7 @@ pub fn run() {
             chat_open,
             chat_close,
             embed_open,
+            embed_move,
             embed_close,
             embed_resize,
             preview_thumb,

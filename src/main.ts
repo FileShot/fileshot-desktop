@@ -505,8 +505,31 @@ function embedSiteUrl(): string | null {
 }
 
 let lastEmbedUrl: string | null = null;
+let embedResizeObserver: ResizeObserver | null = null;
 
-async function syncEmbedWebview() {
+function measureEmbedBounds(): { x: number; y: number; width: number; height: number } | null {
+  const host = document.getElementById("embedHost");
+  if (!host) return null;
+  const r = host.getBoundingClientRect();
+  if (r.width < 8 || r.height < 8) return null;
+  return { x: r.left, y: r.top, width: r.width, height: r.height };
+}
+
+function attachEmbedResizeObserver() {
+  const host = document.getElementById("embedHost");
+  if (!host) {
+    embedResizeObserver?.disconnect();
+    embedResizeObserver = null;
+    return;
+  }
+  if (embedResizeObserver) return;
+  embedResizeObserver = new ResizeObserver(() => {
+    void syncEmbedPanel(false);
+  });
+  embedResizeObserver.observe(host);
+}
+
+async function syncEmbedPanel(forceMove = true) {
   const url = embedSiteUrl();
   if (!url) {
     if (lastEmbedUrl !== null) {
@@ -515,31 +538,34 @@ async function syncEmbedWebview() {
     }
     return;
   }
-  if (url === lastEmbedUrl) {
+
+  attachEmbedResizeObserver();
+  const bounds = measureEmbedBounds();
+  if (!bounds) {
+    requestAnimationFrame(() => void syncEmbedPanel(forceMove));
+    return;
+  }
+
+  if (url === lastEmbedUrl && !forceMove) {
     try {
-      await api.embedResize();
+      await api.embedResize(bounds);
     } catch (e) {
       log(`embed resize failed: ${e}`);
     }
     return;
   }
+
   try {
-    await api.embedOpen(url);
+    await api.embedMove(url, bounds);
     lastEmbedUrl = url;
-    await api.embedResize();
   } catch (e) {
     log(`embed sync failed: ${e}`);
     showToast("Could not load embedded page. Check your connection.", "error");
   }
 }
 
-function renderEmbedHost(title: string): string {
-  return `<div class="chat-embed embed-host" id="embedHost">
-    <div class="embed-host-inner glass">
-      <div class="embed-host-spinner"></div>
-      <p>Loading ${escapeHtml(title)}…</p>
-    </div>
-  </div>`;
+function renderEmbedHost(_title: string): string {
+  return `<div class="chat-embed embed-host" id="embedHost" aria-label="Embedded content"></div>`;
 }
 
 function renderInboxContent(): string {
@@ -727,7 +753,9 @@ function renderApp() {
   `;
   bindAppEvents();
   void loadZkeThumbs();
-  void syncEmbedWebview();
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => void syncEmbedPanel(true));
+  });
 }
 
 async function loadZkeThumbs() {
@@ -1043,7 +1071,8 @@ function bindAppEvents() {
     el.addEventListener("click", async () => {
       const next = (el as HTMLElement).dataset.section as Section;
       if (state.section !== next) {
-        api.embedClose().catch(() => {});
+        lastEmbedUrl = null;
+        void api.embedClose();
         if (next !== "inbox") state.activeInboxPath = null;
         if (next !== "chat") state.activeChatRoom = null;
       }
@@ -1112,14 +1141,19 @@ function bindAppEvents() {
         danger: true,
       });
       if (!ok) return;
+      state.chatRooms = (state.chatRooms as Array<{ roomId?: string }>).filter((r) => r.roomId !== roomId);
+      if (state.activeChatRoom === roomId) state.activeChatRoom = null;
+      render();
       try {
+        await api.authRefreshCsrf();
         await api.chatDelete(roomId);
-        if (state.activeChatRoom === roomId) state.activeChatRoom = null;
         showToast(isOwner ? "Chat deleted" : "Left chat", "success");
         await loadSectionData();
         render();
       } catch (err) {
         showToast(String(err), "error");
+        await loadSectionData();
+        render();
       }
     });
   });
@@ -1501,12 +1535,15 @@ function bindAppEvents() {
 }
 
 function bindCommonEvents() {
+  // Window chrome — delegated once per render is ok; stopPropagation avoids embed stealing clicks.
   document.querySelectorAll("[data-win]").forEach((el) => {
-    el.addEventListener("click", () => {
+    el.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
       const a = (el as HTMLElement).dataset.win;
-      if (a === "min") api.windowMinimize();
-      else if (a === "max") api.windowToggleMaximize();
-      else if (a === "close") api.windowClose();
+      if (a === "min") void api.windowMinimize();
+      else if (a === "max") void api.windowToggleMaximize();
+      else if (a === "close") void api.windowClose();
     });
   });
   document.querySelectorAll("[data-open]").forEach((el) => {
@@ -1528,6 +1565,7 @@ async function boot() {
       state.settings.notification_sound = state.settings.notification_sound ?? true;
       state.settings.theme = state.settings.theme || "system";
       applyTheme(state.settings.theme);
+      void api.embedClose();
       log("boot ok");
     } catch (e) {
       log(`boot auth failed: ${e}`);
@@ -1554,7 +1592,7 @@ async function boot() {
       if (focused) void onAppFocus();
     });
     getCurrentWindow().onResized(() => {
-      void api.embedResize();
+      void syncEmbedPanel(false);
     });
   } catch (e) {
     log(`window focus hook: ${e}`);
