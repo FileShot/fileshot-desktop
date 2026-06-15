@@ -1,6 +1,6 @@
 [package]
 name = "fileshot-desktop"
-version = "1.0.1"
+version = "1.0.2"
 description = "FileShot Desktop"
 authors = ["FileShot.io"]
 edition = "2021"

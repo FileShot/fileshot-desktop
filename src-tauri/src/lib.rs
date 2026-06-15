@@ -276,6 +276,19 @@ async fn chat_rooms(ctx: State<'_, AppCtx>) -> Result<serde_json::Value, String>
 }
 
 #[tauri::command]
+async fn chat_delete(ctx: State<'_, AppCtx>, room_id: String) -> Result<(), String> {
+    ctx.api
+        .delete(&ctx.state, &format!("/chat/rooms/{room_id}"))
+        .await?;
+    Ok(())
+}
+
+#[tauri::command]
+fn embed_resize(app: AppHandle) {
+    embed::embed_resize(&app);
+}
+
+#[tauri::command]
 async fn chat_open(ctx: State<'_, AppCtx>, app: AppHandle) -> Result<(), String> {
     embed::embed_open(&app, &ctx.state, "https://fileshot.io/chat.html?embed=1")
 }
@@ -674,10 +687,12 @@ pub fn run() {
             inbox_create,
             inbox_delete,
             chat_rooms,
+            chat_delete,
             chat_open,
             chat_close,
             embed_open,
             embed_close,
+            embed_resize,
             preview_thumb,
             api_keys_list,
             user_change_password,

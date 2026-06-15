@@ -80,6 +80,7 @@ export const api = {
     invoke<Record<string, unknown>>("folders_create", { name, parentId }),
   inboxList: () => invoke<Record<string, unknown>>("inbox_list"),
   chatRooms: () => invoke<Record<string, unknown>>("chat_rooms"),
+  chatDelete: (roomId: string) => invoke<void>("chat_delete", { roomId }),
   apiKeysList: () => invoke<Record<string, unknown>>("api_keys_list"),
   userChangePassword: (currentPassword: string, newPassword: string) =>
     invoke<Record<string, unknown>>("user_change_password", { currentPassword, newPassword }),
@@ -100,6 +101,7 @@ export const api = {
   inboxDelete: (requestId: string) => invoke<void>("inbox_delete", { requestId }),
   embedOpen: (url: string) => invoke<void>("embed_open", { url }),
   embedClose: () => invoke<void>("embed_close"),
+  embedResize: () => invoke<void>("embed_resize"),
   previewThumb: (fileId: string, isZeroKnowledge: boolean) =>
     invoke<string | null>("preview_thumb", { fileId, isZeroKnowledge }),
   fileShareUrl: (fileId: string, customLink?: string | null) =>

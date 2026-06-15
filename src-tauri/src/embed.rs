@@ -4,6 +4,10 @@ use tauri::{AppHandle, Manager, WebviewUrl};
 
 const EMBED_LABEL: &str = "embed-panel";
 
+/// Main content inset: icon rail + sidebar + titlebar + header row (logical px).
+const EMBED_X: f64 = 276.0;
+const EMBED_Y: f64 = 92.0;
+
 fn auth_init_script(state: &SharedState) -> Result<String, String> {
     let session = state.session.read();
     let token = session.token.clone().unwrap_or_default();
@@ -29,18 +33,17 @@ pub fn embed_open(app: &AppHandle, state: &SharedState, url: &str) -> Result<(),
         return Ok(());
     }
 
-    let scale = main.scale_factor().unwrap_or(1.0);
-    let inner = main.inner_size().map_err(|e| e.to_string())?;
-    let w = (inner.width as f64 / scale) - 276.0;
-    let h = (inner.height as f64 / scale) - 88.0;
+    let (w, h) = embed_content_size(&main)?;
 
     let win = WebviewWindowBuilder::new(app, EMBED_LABEL, WebviewUrl::External(parsed))
         .title("FileShot")
         .parent(&main)
         .map_err(|e| e.to_string())?
         .decorations(false)
-        .position(276.0, 88.0)
-        .inner_size(w.max(400.0), h.max(300.0))
+        .visible(true)
+        .focused(true)
+        .position(EMBED_X, EMBED_Y)
+        .inner_size(w, h)
         .initialization_script(&init)
         .build()
         .map_err(|e| e.to_string())?;
@@ -55,6 +58,14 @@ pub fn embed_close(app: &AppHandle) {
     }
 }
 
+fn embed_content_size(main: &tauri::WebviewWindow) -> Result<(f64, f64), String> {
+    let scale = main.scale_factor().unwrap_or(1.0);
+    let inner = main.inner_size().map_err(|e| e.to_string())?;
+    let w = (inner.width as f64 / scale) - EMBED_X;
+    let h = (inner.height as f64 / scale) - EMBED_Y;
+    Ok((w.max(400.0), h.max(300.0)))
+}
+
 pub fn embed_resize(app: &AppHandle) {
     let Some(main) = app.get_webview_window("main") else {
         return;
@@ -62,11 +73,10 @@ pub fn embed_resize(app: &AppHandle) {
     let Some(embed) = app.get_webview_window(EMBED_LABEL) else {
         return;
     };
-    if let Ok(size) = main.inner_size() {
-        let scale = main.scale_factor().unwrap_or(1.0);
-        let w = (size.width as f64 / scale) - 276.0;
-        let h = (size.height as f64 / scale) - 88.0;
-        let _ = embed.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(276.0, 88.0)));
-        let _ = embed.set_size(tauri::Size::Logical(tauri::LogicalSize::new(w.max(400.0), h.max(300.0))));
+    if let Ok((w, h)) = embed_content_size(&main) {
+        let _ = embed.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
+            EMBED_X, EMBED_Y,
+        )));
+        let _ = embed.set_size(tauri::Size::Logical(tauri::LogicalSize::new(w, h)));
     }
 }

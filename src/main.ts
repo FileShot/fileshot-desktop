@@ -25,6 +25,7 @@ import {
   renderPlansGrid,
   avatarInitial,
 } from "./lib/settings-ui";
+import { showToast, showPrompt, showConfirm } from "./lib/ui-overlay";
 import { log } from "./lib/log";
 import {
   effectiveTierFromUser,
@@ -87,6 +88,7 @@ interface AppState {
     fileName: string;
     versions: Array<{ versionNumber?: number; fileName?: string; fileSize?: number; isLatest?: boolean }>;
   } | null;
+  accountPanelOpen: boolean;
 }
 
 const state: AppState = {
@@ -123,6 +125,7 @@ const state: AppState = {
   activeInboxPath: null,
   activeFolderId: null,
   versionsPanel: null,
+  accountPanelOpen: false,
 };
 
 function applyTheme(theme: string) {
@@ -254,10 +257,14 @@ function sidebarNavItems(): string {
     const rooms = state.chatRooms as Array<{ roomId?: string; name?: string; messageCount?: number }>;
     const create = `<div class="nav-item ${!state.activeChatRoom ? "active" : ""}" data-chat-room="">${icon("chat", 18)}<span>All chats</span></div>`;
     const list = rooms
-      .map(
-        (r) =>
-          `<div class="nav-item ${state.activeChatRoom === r.roomId ? "active" : ""}" data-chat-room="${escapeHtml(r.roomId || "")}">${icon("chat", 18)}<span>${escapeHtml(r.name || r.roomId || "Chat")}</span>${r.messageCount ? `<span class="nav-badge">${r.messageCount}</span>` : ""}</div>`
-      )
+      .map((r) => {
+        const rid = r.roomId || "";
+        const active = state.activeChatRoom === rid;
+        return `<div class="nav-item-wrap">
+          <div class="nav-item ${active ? "active" : ""}" data-chat-room="${escapeHtml(rid)}">${icon("chat", 18)}<span>${escapeHtml(r.name || rid || "Chat")}</span>${r.messageCount ? `<span class="nav-badge">${r.messageCount}</span>` : ""}</div>
+          <button type="button" class="nav-item-action" data-chat-delete="${escapeHtml(rid)}" title="Delete chat">${icon("trash", 14)}</button>
+        </div>`;
+      })
       .join("");
     return `${create}${list || `<p style="padding:12px;font-size:12px;color:var(--t3)">No chats yet.</p>`}<button class="btn btn-ghost btn-sm" type="button" data-chat-room="" style="margin:8px">+ Create chat</button>`;
   }
@@ -474,14 +481,49 @@ function renderTransfersContent(): string {
   `;
 }
 
-function embedFrameSrc(sitePath: string): string {
-  const token = state.session?.token || "";
-  const csrf = state.session?.csrf_token || "";
-  const next = sitePath.startsWith("/") ? sitePath : `/${sitePath}`;
-  const hash = csrf
-    ? `t=${encodeURIComponent(token)}&c=${encodeURIComponent(csrf)}&next=${encodeURIComponent(next)}`
-    : `t=${encodeURIComponent(token)}&next=${encodeURIComponent(next)}`;
-  return `https://fileshot.io/desktop-auth-bridge.html#${hash}`;
+function embedSitePath(): string | null {
+  if (state.section === "tools") {
+    const tv = state.toolsView === "virus-scanner" ? "virus-scanner" : state.toolsView;
+    return `/tools/${tv}.html?embed=1`;
+  }
+  if (state.section === "chat") {
+    const roomQ = state.activeChatRoom ? `&room=${encodeURIComponent(state.activeChatRoom)}` : "";
+    return `/chat.html?embed=1${roomQ}`;
+  }
+  if (state.section === "inbox") {
+    if (!isProOrAbove()) return null;
+    return state.activeInboxPath || "/inbox.html?embed=1";
+  }
+  return null;
+}
+
+function embedSiteUrl(): string | null {
+  const path = embedSitePath();
+  return path ? `https://fileshot.io${path}` : null;
+}
+
+async function syncEmbedWebview() {
+  const url = embedSiteUrl();
+  if (!url) {
+    await api.embedClose();
+    return;
+  }
+  try {
+    await api.embedOpen(url);
+    await api.embedResize();
+  } catch (e) {
+    log(`embed sync failed: ${e}`);
+    showToast("Could not load embedded page. Check your connection.", "error");
+  }
+}
+
+function renderEmbedHost(title: string): string {
+  return `<div class="chat-embed embed-host" id="embedHost">
+    <div class="embed-host-inner glass">
+      <div class="embed-host-spinner"></div>
+      <p>Loading ${escapeHtml(title)}…</p>
+    </div>
+  </div>`;
 }
 
 function renderInboxContent(): string {
@@ -489,17 +531,15 @@ function renderInboxContent(): string {
     return `<div class="embed-placeholder glass"><div class="display-h">Receive Inbox</div><p>Receive Inbox requires Pro.</p><button class="btn btn-primary upgrade-btn" data-upgrade="pro" type="button" style="margin-top:12px">Upgrade to Pro</button></div>`;
   }
   const path = state.activeInboxPath || "/inbox.html?embed=1";
-  return `<div class="chat-embed"><iframe class="chat-frame" src="${escapeHtml(embedFrameSrc(path))}" title="Receive Inbox"></iframe></div>`;
+  return renderEmbedHost("Receive Inbox");
 }
 
 function renderToolsContent(): string {
-  const path = state.toolsView === "virus-scanner" ? "virus-scanner" : state.toolsView;
-  return `<div class="chat-embed"><iframe class="chat-frame" src="${escapeHtml(embedFrameSrc(`/tools/${path}.html?embed=1`))}" title="FileShot Tools"></iframe></div>`;
+  return renderEmbedHost("Tools");
 }
 
 function renderChatContent(): string {
-  const roomQ = state.activeChatRoom ? `&room=${encodeURIComponent(state.activeChatRoom)}` : "";
-  return `<div class="chat-embed"><iframe class="chat-frame" src="${escapeHtml(embedFrameSrc(`/chat.html?embed=1${roomQ}`))}" title="Encrypted Chat"></iframe></div>`;
+  return renderEmbedHost("Chat");
 }
 
 function renderSettingsContent(): string {
@@ -580,6 +620,39 @@ function mainHeader(): string {
   `;
 }
 
+function renderAccountPanel(): string {
+  if (!state.accountPanelOpen) return "";
+  const email = state.session?.email || "Account";
+  const initial = avatarInitial(email);
+  const pct = usagePct();
+  return `
+    <div class="account-panel-backdrop" data-account-close></div>
+    <div class="account-panel glass" role="dialog" aria-label="Account">
+      <div class="account-panel-head">
+        <div class="account-avatar-lg">${escapeHtml(initial)}</div>
+        <div>
+          <div class="account-hero-email">${escapeHtml(email)}</div>
+          <div class="account-hero-tier">${escapeHtml(tierLabel())} plan</div>
+        </div>
+        <button type="button" class="ibtn" data-account-close aria-label="Close">&#10005;</button>
+      </div>
+      <div class="account-panel-stats">
+        <div><span class="stat-label">Storage</span><strong>${escapeHtml(storageLabel())}</strong></div>
+        <div><span class="stat-label">Files</span><strong>${state.files.length}</strong></div>
+        <div><span class="stat-label">Transfers</span><strong>${state.transfers.length}</strong></div>
+      </div>
+      <div class="storage-bar account-panel-bar"><div class="storage-fill" style="width:${pct}%"></div></div>
+      <div class="account-panel-actions">
+        <button type="button" class="btn btn-ghost btn-sm" data-account-jump="account">Account settings</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-account-jump="subscription">Subscription</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-account-jump="security">Security</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-open="https://fileshot.io/account-dashboard.html">Web dashboard</button>
+        ${isFreeTier() ? `<button type="button" class="btn btn-primary btn-sm upgrade-btn" data-upgrade="pro">Upgrade to Pro</button>` : currentTier() === "pro" ? `<button type="button" class="btn btn-ghost btn-sm upgrade-btn" data-upgrade="creator">Upgrade to Creator</button>` : ""}
+        <button type="button" class="btn btn-ghost btn-sm danger-text" id="accountSignOutBtn">Sign out</button>
+      </div>
+    </div>`;
+}
+
 function renderVersionsPanel(): string {
   const p = state.versionsPanel;
   if (!p) return "";
@@ -602,6 +675,8 @@ function renderVersionsPanel(): string {
 
 function renderApp() {
   const pct = usagePct();
+  const email = state.session?.email || "A";
+  const avatar = avatarInitial(email);
   appEl.innerHTML = `
     ${titlebar()}
     <div class="shell">
@@ -612,6 +687,7 @@ function renderApp() {
         <button class="rail-btn ${state.section === "chat" ? "active" : ""}" data-section="chat" title="Chat">${icon("chat", 20)}</button>
         <button class="rail-btn ${state.section === "tools" ? "active" : ""}" data-section="tools" title="Tools">${icon("tools", 20)}</button>
         <div class="rail-spacer"></div>
+        <button class="rail-btn rail-avatar ${state.accountPanelOpen ? "active" : ""}" id="accountRailBtn" title="Account" type="button"><span class="rail-avatar-letter">${escapeHtml(avatar)}</span></button>
         <button class="rail-btn ${state.section === "settings" ? "active" : ""}" data-section="settings" title="Settings">${icon("settings", 20)}</button>
       </nav>
       <aside class="sidebar glass">
@@ -631,9 +707,11 @@ function renderApp() {
     ${state.shareUrl ? `<div class="share-panel glass" id="sharePanel"><strong>Share link ready</strong><input class="share-url" readonly value="${escapeHtml(state.shareUrl)}" /><button class="btn btn-primary btn-sm" id="copyShareBtn">Copy link</button><button class="btn btn-ghost btn-sm" id="dismissShare">Dismiss</button></div>` : ""}
     ${state.contextMenu ? renderFileContextMenu(state.contextMenu, { isFavorite: state.favorites.includes(state.contextMenu.fileId), folders: state.folders }) : ""}
     ${renderVersionsPanel()}
+    ${renderAccountPanel()}
   `;
   bindAppEvents();
   void loadZkeThumbs();
+  void syncEmbedWebview();
 }
 
 async function loadZkeThumbs() {
@@ -702,7 +780,7 @@ async function handleContextAction(action: string, el: HTMLElement) {
         file.isZeroKnowledge ? "Zero-knowledge encrypted" : "",
         file.customLink ? `Custom link: ${file.customLink}` : "",
       ].filter(Boolean);
-      alert(lines.join("\n"));
+      showToast(lines.join(" · "), "info", 5000);
     } else if (action === "move-folder") {
       const folderId = el.dataset.folderId || null;
       await api.filesMove([file.fileId], folderId);
@@ -714,13 +792,20 @@ async function handleContextAction(action: string, el: HTMLElement) {
       const versions = (res as { versions?: Array<{ versionNumber?: number; fileName?: string; fileSize?: number; isLatest?: boolean }> }).versions || [];
       state.versionsPanel = { fileId: file.fileId, fileName: file.fileName, versions };
     } else if (action === "trash") {
-      if (confirm(`Move "${file.fileName}" to trash?`)) {
+      const ok = await showConfirm({
+        title: "Move to trash",
+        message: `Move "${file.fileName}" to trash?`,
+        confirmLabel: "Delete",
+        danger: true,
+      });
+      if (ok) {
         await api.filesDelete(file.fileId);
         await refreshData();
+        showToast("File deleted", "success");
       }
     }
   } catch (e) {
-    alert(String(e));
+    showToast(String(e), "error");
     log(`context action ${action} error: ${e}`);
   }
 
@@ -838,7 +923,7 @@ async function startUpgrade(tier: string) {
   } catch (e) {
     state.error = String(e);
     log(`upgrade error: ${e}`);
-    alert(String(e));
+    showToast(String(e), "error");
   }
 }
 
@@ -959,14 +1044,20 @@ function bindAppEvents() {
     });
   });
   document.getElementById("newInboxBtn")?.addEventListener("click", async () => {
-    const title = prompt("Inbox name:");
-    if (!title?.trim()) return;
+    const title = await showPrompt({
+      title: "New inbox",
+      label: "Inbox name",
+      placeholder: "e.g. Client uploads",
+      confirmLabel: "Create",
+    });
+    if (!title) return;
     try {
-      await api.inboxCreate(title.trim());
+      await api.inboxCreate(title);
+      showToast("Inbox created", "success");
       await loadSectionData();
       render();
     } catch (e) {
-      alert(String(e));
+      showToast(String(e), "error");
     }
   });
   document.querySelectorAll("[data-inbox-path]").forEach((el) => {
@@ -987,6 +1078,29 @@ function bindAppEvents() {
       const room = (el as HTMLElement).dataset.chatRoom || null;
       state.activeChatRoom = room || null;
       render();
+    });
+  });
+  document.querySelectorAll("[data-chat-delete]").forEach((el) => {
+    el.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const roomId = (el as HTMLElement).dataset.chatDelete;
+      if (!roomId) return;
+      const ok = await showConfirm({
+        title: "Delete chat",
+        message: "Remove this chat from your list? Messages are kept for other participants.",
+        confirmLabel: "Delete",
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await api.chatDelete(roomId);
+        if (state.activeChatRoom === roomId) state.activeChatRoom = null;
+        showToast("Chat deleted", "success");
+        await loadSectionData();
+        render();
+      } catch (err) {
+        showToast(String(err), "error");
+      }
     });
   });
   document.querySelectorAll("[data-billing]").forEach((el) => {
@@ -1012,7 +1126,13 @@ function bindAppEvents() {
   document.getElementById("deleteAllFilesBtn")?.addEventListener("click", async () => {
     if (!state.files.length) return;
     const ids = state.files.map((f) => f.fileId);
-    if (!confirm(`Delete all ${ids.length} files permanently? This cannot be undone.`)) return;
+    const ok = await showConfirm({
+      title: "Delete all files",
+      message: `Delete all ${ids.length} files permanently? This cannot be undone.`,
+      confirmLabel: "Delete all",
+      danger: true,
+    });
+    if (!ok) return;
     state.bulkStatus = `Deleting 0/${ids.length}…`;
     render();
     let failed = 0;
@@ -1029,7 +1149,8 @@ function bindAppEvents() {
     state.bulkStatus = null;
     await refreshData();
     render();
-    if (failed) alert(`Failed to delete ${failed} file(s).`);
+    if (failed) showToast(`Failed to delete ${failed} file(s).`, "error");
+    else showToast("All files deleted", "success");
   });
   document.getElementById("toolbarSearch")?.addEventListener("input", (e) => {
     state.search = (e.target as HTMLInputElement).value;
@@ -1095,7 +1216,15 @@ function bindAppEvents() {
       const action = (el as HTMLElement).dataset.bulk!;
       const ids = [...state.selectedIds];
       if (!ids.length || state.bulkStatus) return;
-      if (action === "delete" && !confirm(`Delete ${ids.length} file(s)?`)) return;
+      if (action === "delete") {
+        const ok = await showConfirm({
+          title: "Delete files",
+          message: `Delete ${ids.length} file(s)?`,
+          confirmLabel: "Delete",
+          danger: true,
+        });
+        if (!ok) return;
+      }
 
       const label =
         action === "delete"
@@ -1138,7 +1267,9 @@ function bindAppEvents() {
       await refreshData();
       render();
       if (failures.length) {
-        alert(`${action} failed for ${failures.length} file(s). Check app log for details.`);
+        showToast(`${action} failed for ${failures.length} file(s).`, "error");
+      } else if (action === "delete") {
+        showToast("Files deleted", "success");
       }
     });
   });
@@ -1221,9 +1352,16 @@ function bindAppEvents() {
           render();
         }
       } else if (action === "delete") {
-        if (confirm("Delete this file permanently?")) {
+        const ok = await showConfirm({
+          title: "Delete file",
+          message: "Delete this file permanently?",
+          confirmLabel: "Delete",
+          danger: true,
+        });
+        if (ok) {
           await api.filesDelete(id);
           await refreshData();
+          showToast("File deleted", "success");
           render();
         }
       } else if (action === "star") {
@@ -1251,9 +1389,13 @@ function bindAppEvents() {
   });
   document.getElementById("refreshSubscriptionBtn")?.addEventListener("click", async () => {
     await onAppFocus();
-    alert(isPremiumTier(currentTier()) ? `Subscription active: ${tierLabel()}` : "Still showing Free — try again in a moment if you just paid.");
+    showToast(
+      isPremiumTier(currentTier()) ? `Subscription active: ${tierLabel()}` : "Still showing Free — try again in a moment if you just paid.",
+      isPremiumTier(currentTier()) ? "success" : "info"
+    );
   });
   document.getElementById("logoutBtn")?.addEventListener("click", async () => {
+    await api.embedClose();
     await api.authLogout();
     state.session = null;
     render();
@@ -1269,16 +1411,16 @@ function bindAppEvents() {
   document.getElementById("importKeysBtn")?.addEventListener("click", async () => {
     const raw = (document.getElementById("importKeysJson") as HTMLTextAreaElement)?.value?.trim();
     if (!raw) {
-      alert("Paste the JSON from your browser first.");
+      showToast("Paste the JSON from your browser first.", "error");
       return;
     }
     try {
       const n = await api.importKeyring(raw);
       await refreshData();
-      alert(`Imported ${n} key(s). Copy-link and download should work for those files.`);
+      showToast(`Imported ${n} key(s).`, "success");
       render();
     } catch (e) {
-      alert(String(e));
+      showToast(String(e), "error");
     }
   });
   document.getElementById("changePwBtn")?.addEventListener("click", async () => {
@@ -1286,9 +1428,9 @@ function bindAppEvents() {
     const neu = (document.getElementById("newPw") as HTMLInputElement).value;
     try {
       await api.userChangePassword(cur, neu);
-      alert("Password updated.");
+      showToast("Password updated.", "success");
     } catch (e) {
-      alert(String(e));
+      showToast(String(e), "error");
     }
   });
   document.getElementById("copyShareBtn")?.addEventListener("click", () => {
@@ -1299,11 +1441,36 @@ function bindAppEvents() {
       startUpgrade((el as HTMLElement).dataset.upgrade || "pro");
     });
   });
-  document.querySelector(".sidebar-account-btn")?.addEventListener("click", async (e) => {
+  document.getElementById("accountRailBtn")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    state.accountPanelOpen = !state.accountPanelOpen;
+    render();
+  });
+  document.querySelectorAll("[data-account-close]").forEach((el) => {
+    el.addEventListener("click", () => {
+      state.accountPanelOpen = false;
+      render();
+    });
+  });
+  document.querySelectorAll("[data-account-jump]").forEach((el) => {
+    el.addEventListener("click", async () => {
+      state.accountPanelOpen = false;
+      state.section = "settings";
+      state.settingsView = (el as HTMLElement).dataset.accountJump as SettingsView;
+      await loadSectionData();
+      render();
+    });
+  });
+  document.getElementById("accountSignOutBtn")?.addEventListener("click", async () => {
+    state.accountPanelOpen = false;
+    await api.embedClose();
+    await api.authLogout();
+    state.session = null;
+    render();
+  });
+  document.querySelector(".sidebar-account-btn")?.addEventListener("click", (e) => {
     e.preventDefault();
-    state.section = "settings";
-    state.settingsView = "account";
-    await loadSectionData();
+    state.accountPanelOpen = !state.accountPanelOpen;
     render();
   });
   document.getElementById("dismissShare")?.addEventListener("click", () => {
@@ -1365,6 +1532,9 @@ async function boot() {
   try {
     getCurrentWindow().onFocusChanged(({ payload: focused }) => {
       if (focused) void onAppFocus();
+    });
+    getCurrentWindow().onResized(() => {
+      void api.embedResize();
     });
   } catch (e) {
     log(`window focus hook: ${e}`);
