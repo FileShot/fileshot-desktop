@@ -120,6 +120,9 @@ pub fn embed_move(
     height: f64,
 ) -> Result<(), String> {
     if width < 8.0 || height < 8.0 {
+        if let Some(w) = app.get_webview(EMBED_LABEL) {
+            park_embed_offscreen(&w);
+        }
         return Ok(());
     }
 
@@ -147,9 +150,15 @@ pub fn embed_move(
     embed_open(app, state, url, x, y, width, height)
 }
 
+fn park_embed_offscreen(embed: &tauri::Webview) {
+    let _ = embed.set_position(Position::Logical(LogicalPosition::new(-10_000.0, -10_000.0)));
+    let _ = embed.set_size(Size::Logical(LogicalSize::new(1.0, 1.0)));
+    let _ = embed.hide();
+}
+
 pub fn embed_close(app: &AppHandle) {
     if let Some(w) = app.get_webview(EMBED_LABEL) {
-        let _ = w.hide();
+        park_embed_offscreen(&w);
     }
     EMBED.lock().last_url = None;
 }
@@ -159,7 +168,9 @@ pub fn embed_resize(app: &AppHandle, x: f64, y: f64, width: f64, height: f64) {
         return;
     };
     if width < 8.0 || height < 8.0 {
-        let _ = embed.hide();
+        if let Some(w) = app.get_webview(EMBED_LABEL) {
+            park_embed_offscreen(&w);
+        }
         return;
     }
     let bounds = EmbedBounds {

@@ -18,12 +18,21 @@ import {
 import { icon, type IconName } from "./lib/icons";
 import { renderFileContextMenu } from "./lib/context-menu";
 import {
+  renderUploadOptionsPanel,
+  readUploadOptionsFromDom,
+  type PendingUpload,
+  type UploadSubmitOptions,
+} from "./lib/upload-flow";
+import { hideChatRoom, filterHiddenChats } from "./lib/hidden-chats";
+import {
   type SettingsView,
   renderGeneralSettings,
   renderAccountSettings,
   renderSubscriptionSettings,
   renderPlansGrid,
   avatarInitial,
+  settingRow,
+  toggleHtml,
 } from "./lib/settings-ui";
 import { showToast, showPrompt, showConfirm } from "./lib/ui-overlay";
 import { log } from "./lib/log";
@@ -89,6 +98,7 @@ interface AppState {
     versions: Array<{ versionNumber?: number; fileName?: string; fileSize?: number; isLatest?: boolean }>;
   } | null;
   accountPanelOpen: boolean;
+  pendingUpload: PendingUpload | null;
 }
 
 const state: AppState = {
@@ -126,6 +136,7 @@ const state: AppState = {
   activeFolderId: null,
   versionsPanel: null,
   accountPanelOpen: false,
+  pendingUpload: null,
 };
 
 function applyTheme(theme: string) {
@@ -425,8 +436,14 @@ function uploadZoneHtml(): string {
 
 function renderFilesContent(): string {
   const files = filteredFiles();
-  const token = state.session?.token ?? null;
   const showUpload = state.filesView === "drive";
+  const uploadBlock = state.pendingUpload
+    ? renderUploadOptionsPanel(
+        state.pendingUpload,
+        currentTier(),
+        !!(state.settings?.master_key_enabled && isPremiumTier(currentTier()))
+      )
+    : uploadZoneHtml();
   const grid =
     files.length === 0
       ? showUpload && !state.search
@@ -439,7 +456,7 @@ function renderFilesContent(): string {
           (f) => `
         <div class="file-card glass ${state.selectedIds.has(f.fileId) ? "selected" : ""}" data-file-id="${f.fileId}">
           <label class="file-select"><input type="checkbox" class="file-cb" data-id="${f.fileId}" ${state.selectedIds.has(f.fileId) ? "checked" : ""} /></label>
-          ${renderThumb(f, token, state.keyringIds.has(f.fileId))}
+          ${renderThumb(f, state.session?.token ?? null, state.keyringIds.has(f.fileId))}
           <div class="file-card-body">
             <div class="name" title="${escapeHtml(f.fileName)}">${escapeHtml(f.fileName)}</div>
             <div class="meta">${formatBytes(f.fileSize)} &middot; ${formatDate(f.createdAt)}${f.isZeroKnowledge ? " &middot; ZKE" : ""}${state.keyringIds.has(f.fileId) ? " &middot; Key" : ""}</div>
@@ -456,7 +473,7 @@ function renderFilesContent(): string {
         .join("")}
     </div>
   `;
-  return `${showUpload ? uploadZoneHtml() : ""}${showUpload ? filesToolbarHtml() : ""}${grid}`;
+  return `${showUpload ? uploadBlock : ""}${showUpload && !state.pendingUpload ? filesToolbarHtml() : ""}${grid}`;
 }
 
 function renderTransfersContent(): string {
@@ -599,11 +616,26 @@ function renderSettingsContent(): string {
     })}</div>`;
   }
   if (state.settingsView === "security") {
+    const pro = isPremiumTier(currentTier());
     return `<div class="settings-panel">
       <div class="settings-group">
         <h3 class="settings-group-title">Encryption keys</h3>
         <p class="settings-lead">Export keys for backup. Import browser keys so copy-link and download work for web uploads.</p>
         <button class="btn btn-primary" id="exportKeysBtn">Export master keys</button>
+      </div>
+      <div class="settings-group">
+        <h3 class="settings-group-title">Upload master key ${pro ? "" : `<span class="pro-pill">PRO</span>`}</h3>
+        <p class="settings-lead">Use one password for all protected uploads from this app. Keys stay in your link when password is off (same as the website).</p>
+        ${settingRow(
+          "Enable master key",
+          "When password protect is on during upload, use this key instead of typing each time.",
+          toggleHtml("master_key_enabled", !!(s.master_key_enabled && pro))
+        )}
+        <div class="form-group" style="margin-top:12px">
+          <label>Master key</label>
+          <input type="password" id="masterKeyInput" placeholder="${pro ? "At least 4 characters" : "Pro required"}" value="${escapeHtml(s.master_key || "")}" ${pro ? "" : "disabled"} />
+        </div>
+        <button class="btn btn-ghost btn-sm" type="button" id="saveMasterKeyBtn" ${pro ? "" : "disabled"}>Save master key</button>
       </div>
       <div class="settings-group">
         <h3 class="settings-group-title">Import from browser</h3>
@@ -983,7 +1015,8 @@ async function loadSectionData() {
   if (state.section === "chat") {
     try {
       const res = await api.chatRooms();
-      state.chatRooms = (res as { rooms?: unknown[] }).rooms || [];
+      const rooms = (res as { rooms?: unknown[] }).rooms || [];
+      state.chatRooms = filterHiddenChats(rooms as Array<{ roomId?: string }>);
     } catch {
       state.chatRooms = [];
     }
@@ -998,14 +1031,40 @@ async function loadSectionData() {
   }
 }
 
-async function doUpload(paths?: string[]) {
+async function queueUpload(paths?: string[]) {
   const selected = paths ?? (await api.pickFiles());
   if (!selected.length) return;
-  log(`upload start: ${selected.length} file(s)`);
+  const names = selected.map((p) => p.split(/[/\\]/).pop() || "file");
+  state.pendingUpload = {
+    paths: selected,
+    names,
+    totalBytes: 0,
+    expirationDays: 180,
+    maxDownloads: "",
+    passwordEnabled: false,
+    password: "",
+    customLink: "",
+  };
+  state.section = "files";
+  state.filesView = "drive";
+  render();
+}
+
+async function runUploadWithOptions(opts: UploadSubmitOptions) {
+  if (!state.pendingUpload?.paths.length) return;
+  const paths = state.pendingUpload.paths;
+  state.pendingUpload = null;
+  log(`upload start: ${paths.length} file(s)`);
   state.section = "transfers";
   render();
   try {
-    const urls = await api.uploadPaths(selected);
+    const urls = await api.uploadPaths(paths, {
+      expiration_days: opts.expirationDays,
+      max_downloads: opts.maxDownloads,
+      password: opts.password,
+      custom_link: opts.customLink,
+      use_master_key: opts.useMasterKey,
+    });
     if (urls.length) {
       state.shareUrl = urls[urls.length - 1];
       log(`upload done: ${urls[urls.length - 1]}`);
@@ -1017,6 +1076,10 @@ async function doUpload(paths?: string[]) {
     state.error = String(e);
     render();
   }
+}
+
+async function doUpload(paths?: string[]) {
+  await queueUpload(paths);
 }
 
 function bindAuthEvents() {
@@ -1126,35 +1189,19 @@ function bindAppEvents() {
     });
   });
   document.querySelectorAll("[data-chat-delete]").forEach((el) => {
-    el.addEventListener("click", async (e) => {
+    el.addEventListener("click", (e) => {
       e.stopPropagation();
-      const btn = el as HTMLElement;
-      const roomId = btn.dataset.chatDelete;
+      e.preventDefault();
+      const roomId = (el as HTMLElement).dataset.chatDelete;
       if (!roomId) return;
-      const isOwner = btn.dataset.chatOwner === "1";
-      const ok = await showConfirm({
-        title: isOwner ? "Delete chat" : "Leave chat",
-        message: isOwner
-          ? "Delete this chat for everyone? This cannot be undone."
-          : "Remove this chat from your list? Other participants keep the room.",
-        confirmLabel: isOwner ? "Delete" : "Leave",
-        danger: true,
-      });
-      if (!ok) return;
+      hideChatRoom(roomId);
       state.chatRooms = (state.chatRooms as Array<{ roomId?: string }>).filter((r) => r.roomId !== roomId);
-      if (state.activeChatRoom === roomId) state.activeChatRoom = null;
-      render();
-      try {
-        await api.authRefreshCsrf();
-        await api.chatDelete(roomId);
-        showToast(isOwner ? "Chat deleted" : "Left chat", "success");
-        await loadSectionData();
-        render();
-      } catch (err) {
-        showToast(String(err), "error");
-        await loadSectionData();
-        render();
+      if (state.activeChatRoom === roomId) {
+        state.activeChatRoom = null;
+        lastEmbedUrl = null;
+        void api.embedClose();
       }
+      render();
     });
   });
   document.querySelectorAll("[data-billing]").forEach((el) => {
@@ -1354,7 +1401,27 @@ function bindAppEvents() {
       render();
     });
   });
-  document.getElementById("uploadBtn")?.addEventListener("click", () => doUpload());
+  document.getElementById("uploadBtn")?.addEventListener("click", () => void queueUpload());
+  document.getElementById("uploadOptionsCancel")?.addEventListener("click", () => {
+    state.pendingUpload = null;
+    render();
+  });
+  document.getElementById("uploadChangeFiles")?.addEventListener("click", () => void queueUpload());
+  document.getElementById("uploadStartBtn")?.addEventListener("click", () => {
+    if (!state.pendingUpload) return;
+    const opts = readUploadOptionsFromDom(
+      state.pendingUpload,
+      currentTier(),
+      !!(state.settings?.master_key_enabled && isPremiumTier(currentTier()))
+    );
+    if (!opts) return;
+    void runUploadWithOptions(opts);
+  });
+  document.getElementById("uploadPwEnabled")?.addEventListener("change", (e) => {
+    const on = (e.target as HTMLInputElement).checked;
+    const pw = document.getElementById("uploadPassword") as HTMLInputElement | null;
+    if (pw) pw.disabled = !on || !isPremiumTier(currentTier());
+  });
   document.getElementById("searchInput")?.addEventListener("input", (e) => {
     state.search = (e.target as HTMLInputElement).value;
     render();
@@ -1362,12 +1429,12 @@ function bindAppEvents() {
   const bindDrop = (el: HTMLElement | null) => {
     if (!el) return;
     el.addEventListener("click", () => {
-      if (el.id === "dropzone") doUpload();
+      if (el.id === "dropzone") void queueUpload();
     });
     el.addEventListener("keydown", (e) => {
       if (el.id === "dropzone" && (e.key === "Enter" || e.key === " ")) {
         e.preventDefault();
-        doUpload();
+        void queueUpload();
       }
     });
     el.addEventListener("dragover", (e) => {
@@ -1380,7 +1447,7 @@ function bindAppEvents() {
       el.classList.remove("dragover");
       const files = Array.from(e.dataTransfer?.files || []);
       const paths = files.map((f) => (f as File & { path?: string }).path).filter(Boolean) as string[];
-      if (paths.length) await doUpload(paths);
+      if (paths.length) void queueUpload(paths);
     });
   };
   bindDrop(document.getElementById("dropzone"));
@@ -1435,7 +1502,12 @@ function bindAppEvents() {
       const key = (el as HTMLElement).dataset.toggle as
         | "autostart"
         | "minimize_to_tray"
-        | "start_minimized";
+        | "start_minimized"
+        | "master_key_enabled";
+      if (key === "master_key_enabled" && !isPremiumTier(currentTier())) {
+        showToast("Master key requires Pro.", "error");
+        return;
+      }
       state.settings[key] = !state.settings[key];
       await api.settingsSet(state.settings);
       render();
@@ -1453,6 +1525,17 @@ function bindAppEvents() {
     await api.authLogout();
     state.session = null;
     render();
+  });
+  document.getElementById("saveMasterKeyBtn")?.addEventListener("click", async () => {
+    if (!state.settings || !isPremiumTier(currentTier())) return;
+    const val = (document.getElementById("masterKeyInput") as HTMLInputElement | null)?.value.trim() || "";
+    if (val && val.length < 4) {
+      showToast("Master key must be at least 4 characters.", "error");
+      return;
+    }
+    state.settings.master_key = val || null;
+    await api.settingsSet(state.settings);
+    showToast("Master key saved.", "success");
   });
   document.getElementById("exportKeysBtn")?.addEventListener("click", async () => {
     const json = await api.exportKeyring();
@@ -1535,17 +1618,6 @@ function bindAppEvents() {
 }
 
 function bindCommonEvents() {
-  // Window chrome — delegated once per render is ok; stopPropagation avoids embed stealing clicks.
-  document.querySelectorAll("[data-win]").forEach((el) => {
-    el.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const a = (el as HTMLElement).dataset.win;
-      if (a === "min") void api.windowMinimize();
-      else if (a === "max") void api.windowToggleMaximize();
-      else if (a === "close") void api.windowClose();
-    });
-  });
   document.querySelectorAll("[data-open]").forEach((el) => {
     el.addEventListener("click", (e) => {
       e.preventDefault();
@@ -1554,7 +1626,28 @@ function bindCommonEvents() {
   });
 }
 
+let windowChromeBound = false;
+function bindWindowChrome() {
+  if (windowChromeBound) return;
+  windowChromeBound = true;
+  document.addEventListener(
+    "click",
+    (e) => {
+      const btn = (e.target as HTMLElement | null)?.closest?.("[data-win]") as HTMLElement | null;
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const action = btn.dataset.win;
+      if (action === "min") void api.windowMinimize();
+      else if (action === "max") void api.windowToggleMaximize();
+      else if (action === "close") void api.windowClose();
+    },
+    true
+  );
+}
+
 async function boot() {
+  bindWindowChrome();
   state.session = await api.authGetSession();
   if (state.session?.token) {
     try {

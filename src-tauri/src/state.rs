@@ -13,6 +13,10 @@ pub struct AppSettings {
     pub notification_sound: bool,
     #[serde(default = "default_theme")]
     pub theme: String,
+    #[serde(default)]
+    pub master_key_enabled: bool,
+    #[serde(default)]
+    pub master_key: Option<String>,
 }
 
 fn default_theme() -> String {
@@ -49,6 +53,8 @@ pub struct KeyringEntry {
     pub file_id: String,
     pub raw_key: String,
     pub original_name: String,
+    #[serde(default)]
+    pub share_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +102,8 @@ impl AppState {
                 chat_notifications: true,
                 notification_sound: true,
                 theme: "system".to_string(),
+                master_key_enabled: false,
+                master_key: None,
             }),
             keyring: RwLock::new(HashMap::new()),
             transfers: RwLock::new(Vec::new()),

@@ -16,6 +16,16 @@ export interface AppSettings {
   chat_notifications: boolean;
   notification_sound: boolean;
   theme: string;
+  master_key_enabled?: boolean;
+  master_key?: string | null;
+}
+
+export interface UploadOptions {
+  expiration_days?: number | null;
+  max_downloads?: number | null;
+  password?: string | null;
+  custom_link?: string | null;
+  use_master_key?: boolean | null;
 }
 
 export interface TransferItem {
@@ -121,7 +131,8 @@ export const api = {
   keyringIds: () => invoke<string[]>("keyring_ids"),
   chatOpen: () => invoke<void>("chat_open"),
   chatClose: () => invoke<void>("chat_close"),
-  uploadPaths: (paths: string[]) => invoke<string[]>("upload_paths", { paths }),
+  uploadPaths: (paths: string[], options?: UploadOptions | null) =>
+    invoke<string[]>("upload_paths", { paths, options: options ?? null }),
   downloadFile: (fileId: string, savePath: string) =>
     invoke<void>("download_file_cmd", { fileId, savePath }),
   transfersList: () => invoke<TransferItem[]>("transfers_list"),

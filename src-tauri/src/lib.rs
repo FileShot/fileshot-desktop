@@ -6,7 +6,7 @@ mod state;
 mod zke;
 
 use services::share::build_share_url;
-use services::upload::{download_file, upload_files};
+use services::upload::{download_file, upload_files, UploadOptions};
 use services::preview::preview_thumb_path;
 use services::{
     load_session, persist_favorites, persist_keyring, persist_session, persist_settings, ApiClient,
@@ -384,15 +384,20 @@ async fn auth_refresh_csrf(ctx: State<'_, AppCtx>) -> Result<(), String> {
 
 #[tauri::command]
 fn file_share_url(ctx: State<'_, AppCtx>, file_id: String, custom_link: Option<String>) -> String {
-    let key = {
-        let kr = ctx.state.keyring.read();
-        kr.get(&file_id).map(|e| e.raw_key.clone())
-    };
-    build_share_url(
-        &file_id,
-        custom_link.as_deref(),
-        key.as_deref(),
-    )
+    let kr = ctx.state.keyring.read();
+    if let Some(entry) = kr.get(&file_id) {
+        if let Some(ref url) = entry.share_url {
+            if !url.is_empty() {
+                return url.clone();
+            }
+        }
+        return build_share_url(
+            &file_id,
+            custom_link.as_deref(),
+            Some(entry.raw_key.as_str()),
+        );
+    }
+    build_share_url(&file_id, custom_link.as_deref(), None)
 }
 
 #[tauri::command]
@@ -460,8 +465,16 @@ async fn upload_paths(
     ctx: State<'_, AppCtx>,
     app: AppHandle,
     paths: Vec<String>,
+    options: Option<UploadOptions>,
 ) -> Result<Vec<String>, String> {
-    upload_files(app, ctx.state.clone(), ctx.api.clone(), paths).await
+    upload_files(
+        app,
+        ctx.state.clone(),
+        ctx.api.clone(),
+        paths,
+        options.unwrap_or_default(),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -639,6 +652,7 @@ async fn import_keyring(
                     file_id,
                     raw_key,
                     original_name,
+                    share_url: None,
                 },
             );
             count += 1;

@@ -2,6 +2,7 @@ use crate::services::{add_activity, emit_transfer_update, persist_keyring, share
 use crate::state::{KeyringEntry, SharedState, TransferItem};
 use crate::zke::{self, DEFAULT_CHUNK_SIZE};
 use mime_guess::from_path;
+use serde::Deserialize;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager};
@@ -10,15 +11,25 @@ use tokio::io::AsyncReadExt;
 
 const CHUNK_UPLOAD_BYTES: usize = 8 * 1024 * 1024;
 
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct UploadOptions {
+    pub expiration_days: Option<u32>,
+    pub max_downloads: Option<u32>,
+    pub password: Option<String>,
+    pub custom_link: Option<String>,
+    pub use_master_key: Option<bool>,
+}
+
 pub async fn upload_files(
     app: AppHandle,
     state: SharedState,
     api: ApiClient,
     paths: Vec<String>,
+    options: UploadOptions,
 ) -> Result<Vec<String>, String> {
     let mut results = Vec::new();
     for path_str in paths {
-        match upload_single_file(app.clone(), state.clone(), api.clone(), &path_str).await {
+        match upload_single_file(app.clone(), state.clone(), api.clone(), &path_str, &options).await {
             Ok(url) => results.push(url),
             Err(e) => {
                 let _ = app.emit("upload-error", json!({ "path": path_str, "error": e }));
@@ -33,6 +44,7 @@ async fn upload_single_file(
     state: SharedState,
     api: ApiClient,
     path_str: &str,
+    options: &UploadOptions,
 ) -> Result<String, String> {
     let path = PathBuf::from(path_str);
     if !path.is_file() {
@@ -77,22 +89,36 @@ async fn upload_single_file(
         .map(|m| m.essence_str().to_string())
         .unwrap_or_else(|| "application/octet-stream".into());
 
+    let passphrase = resolve_passphrase(&state, options);
+    let password_enabled = passphrase.is_some();
+
     let enc = zke::encrypt_file_to_zke_container(
         &path,
         &enc_path,
         Some(&file_name),
         &mime,
         None,
-        None,
+        passphrase.as_deref(),
         DEFAULT_CHUNK_SIZE,
     )
     .map_err(|e| e.to_string())?;
 
-    let raw_key = enc.raw_key.clone().ok_or("Missing raw key")?;
+    let raw_key = enc.raw_key.clone().ok_or("Missing encryption key")?;
     let enc_meta = std::fs::metadata(&enc_path).map_err(|e| e.to_string())?;
     let enc_size = enc_meta.len();
+    let expiration_days = options.expiration_days.unwrap_or(180).max(1);
 
-    update_transfer(&state, &app, &transfer_id, "uploading", 5.0, 0, enc_size, None, None);
+    update_transfer(
+        &state,
+        &app,
+        &transfer_id,
+        "uploading",
+        5.0,
+        0,
+        enc_size,
+        None,
+        None,
+    );
 
     let pre = api
         .post_json(
@@ -105,8 +131,10 @@ async fn upload_single_file(
                 "originalFileSize": plain_size,
                 "originalMimeType": mime,
                 "isZeroKnowledge": "true",
-                "isPasswordProtected": "false",
-                "expirationDays": 180
+                "isPasswordProtected": if password_enabled { "true" } else { "false" },
+                "expirationDays": expiration_days,
+                "maxDownloads": options.max_downloads,
+                "customLink": options.custom_link.as_deref().unwrap_or("")
             }),
             false,
         )
@@ -193,7 +221,13 @@ async fn upload_single_file(
     )
     .await?;
 
-    let share_url = build_share_url(&file_id, None, Some(&raw_key));
+    let custom_slug = options.custom_link.as_deref().filter(|s| !s.is_empty());
+    let key_for_url = if password_enabled {
+        None
+    } else {
+        Some(raw_key.as_str())
+    };
+    let share_url = build_share_url(&file_id, custom_slug, key_for_url);
 
     {
         let mut kr = state.keyring.write();
@@ -203,6 +237,7 @@ async fn upload_single_file(
                 file_id: file_id.clone(),
                 raw_key: raw_key.clone(),
                 original_name: file_name.clone(),
+                share_url: Some(share_url.clone()),
             },
         );
     }
@@ -224,6 +259,22 @@ async fn upload_single_file(
     let _ = std::fs::remove_file(&enc_path);
 
     Ok(share_url)
+}
+
+fn resolve_passphrase(state: &SharedState, options: &UploadOptions) -> Option<String> {
+    if options.use_master_key == Some(true) {
+        let settings = state.settings.read();
+        if settings.master_key_enabled {
+            return settings
+                .master_key
+                .clone()
+                .filter(|p| p.len() >= 4);
+        }
+    }
+    options
+        .password
+        .clone()
+        .filter(|p| !p.is_empty() && p.len() >= 4)
 }
 
 fn push_transfer_emit(state: &SharedState, app: &AppHandle) {
