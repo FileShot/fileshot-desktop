@@ -30,11 +30,13 @@ jobs:
           - platform: macos-latest
             args: "--target x86_64-apple-darwin"
             rust_targets: "x86_64-apple-darwin"
+            continue_on_error: true
           - platform: ubuntu-latest
             args: ""
             rust_targets: ""
 
     runs-on: ${{ matrix.platform }}
+    continue-on-error: ${{ matrix.continue_on_error == true }}
 
     steps:
       - uses: actions/checkout@v4
@@ -62,6 +64,8 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_NET_RETRY: 10
+          CARGO_HTTP_MULTIPLEXING: "false"
         with:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('desktop-v{0}', inputs.version) }}
           releaseName: "FileShot Desktop ${{ github.ref_type == 'tag' && github.ref_name || format('desktop-v{0}', inputs.version) }}"
