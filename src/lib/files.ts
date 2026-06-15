@@ -1,5 +1,6 @@
 import type { FileItem } from "./invoke";
 import { icon } from "./icons";
+import { canPreviewMedia, placeholderTheme } from "./placeholders";
 
 const API = "https://api.fileshot.io/api";
 
@@ -30,7 +31,27 @@ export function fileCategory(name: string, mimeType?: string): FileCategory {
   if (["mp3", "wav", "m4a", "flac", "aac"].includes(ext)) return "audio";
   if (ext === "pdf") return "pdf";
   if (["zip", "rar", "7z", "tar", "gz", "bz2"].includes(ext)) return "archive";
-  if (["js", "ts", "tsx", "jsx", "py", "rs", "go", "java", "html", "css", "json", "sql"].includes(ext))
+  if (
+    [
+      "js",
+      "ts",
+      "tsx",
+      "jsx",
+      "py",
+      "rs",
+      "go",
+      "java",
+      "html",
+      "css",
+      "json",
+      "sql",
+      "toml",
+      "yaml",
+      "yml",
+      "xml",
+      "lock",
+    ].includes(ext)
+  )
     return "code";
   if (["txt", "md", "log", "csv"].includes(ext)) return "text";
   return "file";
@@ -41,43 +62,58 @@ export function previewUrl(fileId: string, token: string | null): string {
   return token ? `${base}?token=${encodeURIComponent(token)}` : base;
 }
 
-function typeIcon(cat: FileCategory): string {
-  const map: Record<FileCategory, Parameters<typeof icon>[0]> = {
-    image: "image",
-    video: "video",
-    audio: "file",
-    pdf: "file",
-    archive: "archive",
-    code: "file",
-    text: "file",
-    file: "file",
-  };
-  return icon(map[cat], 32);
-}
-
 function zkeBadge(): string {
   return `<span class="zke-badge" title="Zero-knowledge encrypted">${icon("lock", 12)}</span>`;
+}
+
+function keyBadge(): string {
+  return `<span class="key-badge">Key saved</span>`;
+}
+
+export function placeholderInnerHtml(file: FileItem): string {
+  const ext = extFromName(file.fileName);
+  const theme = placeholderTheme(ext, file.fileName, file.mimeType);
+  return `<span class="ph-ext">${theme.label}</span>`;
+}
+
+export function renderPlaceholder(file: FileItem, hasKey = false): string {
+  const ext = extFromName(file.fileName);
+  const theme = placeholderTheme(ext, file.fileName, file.mimeType);
+  const zke = file.isZeroKnowledge;
+  return `<div class="file-thumb placeholder ext-${theme.slug}" style="--ph-a:${theme.c1};--ph-b:${theme.c2};--ph-accent:${theme.accent}">
+    <div class="file-thumb-placeholder">${placeholderInnerHtml(file)}</div>
+    ${zke ? zkeBadge() : ""}${hasKey ? keyBadge() : ""}
+  </div>`;
 }
 
 export function renderThumb(file: FileItem, token: string | null, hasKey = false): string {
   const cat = fileCategory(file.fileName, file.mimeType);
   const zke = file.isZeroKnowledge;
+  const fallback = renderPlaceholder(file, hasKey);
 
-  if (!zke) {
-    if (cat === "image") {
-      const src = previewUrl(file.fileId, token);
-      return `<div class="file-thumb media has-preview"><img src="${src}" alt="" loading="lazy" decoding="async" onerror="this.classList.add('broken');" /><div class="file-thumb-placeholder fallback-only">${typeIcon(cat)}</div></div>`;
-    }
-    if (cat === "video") {
-      const src = previewUrl(file.fileId, token);
-      return `<div class="file-thumb media has-preview"><video src="${src}" muted playsinline preload="metadata" onerror="this.classList.add('broken');" onloadeddata="try{this.currentTime=0.1}catch(e){}"></video><div class="file-thumb-placeholder fallback-only">${typeIcon(cat)}</div></div>`;
-    }
-    return `<div class="file-thumb">${typeIcon(cat)}</div>`;
+  if (zke) {
+    return fallback;
   }
 
-  // ZKE: server cannot preview ciphertext — show type icon; badge if we hold the key locally
-  const keyHint = hasKey ? `<span class="key-badge">Key saved</span>` : "";
-  return `<div class="file-thumb zke-thumb">${typeIcon(cat)}${zkeBadge()}${keyHint}</div>`;
+  if (cat === "image" && canPreviewMedia(file.fileName, file.mimeType)) {
+    const src = previewUrl(file.fileId, token);
+    const theme = placeholderTheme(extFromName(file.fileName), file.fileName, file.mimeType);
+    return `<div class="file-thumb media has-preview placeholder ext-${theme.slug}" style="--ph-a:${theme.c1};--ph-b:${theme.c2};--ph-accent:${theme.accent}">
+      <img src="${src}" alt="" loading="lazy" decoding="async" onerror="this.classList.add('broken')" />
+      <div class="file-thumb-placeholder fallback-only">${placeholderInnerHtml(file)}</div>
+    </div>`;
+  }
+
+  if (cat === "video" && canPreviewMedia(file.fileName, file.mimeType)) {
+    const src = previewUrl(file.fileId, token);
+    const theme = placeholderTheme(extFromName(file.fileName), file.fileName, file.mimeType);
+    return `<div class="file-thumb media has-preview placeholder ext-${theme.slug}" style="--ph-a:${theme.c1};--ph-b:${theme.c2};--ph-accent:${theme.accent}">
+      <video src="${src}" muted playsinline preload="metadata" onerror="this.classList.add('broken')" onloadeddata="try{this.currentTime=0.1}catch(e){}"></video>
+      <div class="file-thumb-placeholder fallback-only">${placeholderInnerHtml(file)}</div>
+    </div>`;
+  }
+
+  return fallback;
 }
 
 export function normalizeFile(raw: Record<string, unknown>): FileItem {
@@ -136,3 +172,5 @@ export function usagePercent(info: UsageInfo): number {
   if (!info.limit || info.limit <= 0) return Math.min(100, info.usage > 0 ? 8 : 0);
   return Math.min(100, (info.usage / info.limit) * 100);
 }
+
+export { canPreviewMedia, placeholderTheme } from "./placeholders";

@@ -2,21 +2,36 @@ import "./styles/tokens.css";
 import "./styles/app.css";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   formatUsageLabel,
   normalizeFile,
   normalizeUsage,
   renderThumb,
   usagePercent,
+  fileCategory,
+  placeholderInnerHtml,
+  placeholderTheme,
+  extFromName,
   type UsageInfo,
 } from "./lib/files";
 import { icon, type IconName } from "./lib/icons";
+import { renderFileContextMenu } from "./lib/context-menu";
+import {
+  type SettingsView,
+  renderGeneralSettings,
+  renderAccountSettings,
+  renderSubscriptionSettings,
+  renderPlansGrid,
+  avatarInitial,
+} from "./lib/settings-ui";
 import { log } from "./lib/log";
 import {
   effectiveTierFromUser,
   isPremiumTier,
   tierDisplayName,
   normalizeTierName,
+  bestTier,
 } from "./lib/tier";
 import {
   api,
@@ -30,7 +45,6 @@ import {
 
 type Section = "files" | "transfers" | "inbox" | "chat" | "tools" | "settings";
 type FilesView = "drive" | "recents" | "favorites" | "links";
-type SettingsView = "general" | "account" | "security" | "billing" | "apikeys";
 type FileFilter = "all" | "image" | "video" | "zke" | "starred";
 type SortBy = "date" | "name" | "size";
 type ToolsView = "converter" | "pdf" | "compressor" | "paste" | "video-downloader" | "archive" | "virus-scanner";
@@ -63,6 +77,16 @@ interface AppState {
   keyringIds: Set<string>;
   userProfile: Record<string, unknown> | null;
   folders: Array<{ id: string; name: string }>;
+  bulkStatus: string | null;
+  contextMenu: import("./lib/context-menu").ContextMenuState | null;
+  activeChatRoom: string | null;
+  activeInboxPath: string | null;
+  activeFolderId: string | null;
+  versionsPanel: {
+    fileId: string;
+    fileName: string;
+    versions: Array<{ versionNumber?: number; fileName?: string; fileSize?: number; isLatest?: boolean }>;
+  } | null;
 }
 
 const state: AppState = {
@@ -93,7 +117,24 @@ const state: AppState = {
   keyringIds: new Set(),
   userProfile: null,
   folders: [],
+  bulkStatus: null,
+  contextMenu: null,
+  activeChatRoom: null,
+  activeInboxPath: null,
+  activeFolderId: null,
+  versionsPanel: null,
 };
+
+function applyTheme(theme: string) {
+  const root = document.documentElement;
+  if (theme === "light") root.setAttribute("data-theme", "light");
+  else if (theme === "dark") root.setAttribute("data-theme", "dark");
+  else root.removeAttribute("data-theme");
+}
+
+function totalFileBytes(): number {
+  return state.files.reduce((sum, f) => sum + f.fileSize, 0);
+}
 
 const appEl = document.getElementById("app")!;
 
@@ -175,7 +216,7 @@ function sidebarNavItems(): string {
         (i) =>
           `<div class="nav-item ${state.filesView === i.id ? "active" : ""}" data-files-view="${i.id}">${icon(i.ic, 18)}<span>${i.label}</span></div>`
       )
-      .join("") + (state.folders.length ? `<div class="sidebar-divider">Folders</div>${state.folders.map((f) => `<div class="nav-item" data-folder-id="${escapeHtml(f.id)}">${icon("file", 16)}<span>${escapeHtml(f.name)}</span></div>`).join("")}` : "");
+      .join("") + (state.folders.length ? `<div class="sidebar-divider">Folders</div>${state.folders.map((f) => `<div class="nav-item ${state.activeFolderId === f.id ? "active" : ""}" data-folder-id="${escapeHtml(f.id)}">${icon("file", 16)}<span>${escapeHtml(f.name)}</span></div>`).join("")}` : "");
   }
   if (state.section === "tools") {
     const tools: { id: ToolsView; label: string }[] = [
@@ -195,27 +236,44 @@ function sidebarNavItems(): string {
       .join("");
   }
   if (state.section === "inbox") {
-    const items = state.inbox as Array<{ request_id?: string; title?: string; receiveUrl?: string }>;
+    const items = state.inbox as Array<{ request_id?: string; title?: string; slug?: string; subdomain?: string }>;
+    const manage = `<div class="nav-item ${!state.activeInboxPath ? "active" : ""}" data-inbox-path="/inbox.html?embed=1">${icon("mail", 18)}<span>Manage inboxes</span></div>`;
     const list = items
+      .map((i) => {
+        const slug = i.slug || i.request_id || "";
+        const path = i.subdomain ? "" : `/receive/${slug}?embed=1`;
+        const active = state.activeInboxPath === path;
+        return path
+          ? `<div class="nav-item ${active ? "active" : ""}" data-inbox-path="${escapeHtml(path)}">${icon("mail", 18)}<span>${escapeHtml(i.title || "Inbox")}</span></div>`
+          : `<div class="nav-item" data-inbox-external="${escapeHtml(`https://${i.subdomain}.fileshot.io`)}">${icon("mail", 18)}<span>${escapeHtml(i.title || "Inbox")}</span></div>`;
+      })
+      .join("");
+    return `${manage}${list}${isProOrAbove() ? `<button class="btn btn-primary btn-sm" id="newInboxBtn" style="margin:12px 8px">+ New inbox</button>` : `<p class="inbox-gate" style="padding:8px 12px;font-size:12px;color:var(--t3)">Receive Inbox requires Pro.</p><button class="btn btn-primary btn-sm upgrade-btn" data-upgrade="pro" style="margin:8px">Upgrade to Pro</button>`}`;
+  }
+  if (state.section === "chat") {
+    const rooms = state.chatRooms as Array<{ roomId?: string; name?: string; messageCount?: number }>;
+    const create = `<div class="nav-item ${!state.activeChatRoom ? "active" : ""}" data-chat-room="">${icon("chat", 18)}<span>All chats</span></div>`;
+    const list = rooms
       .map(
-        (i) =>
-          `<div class="nav-item" data-inbox-open="${escapeHtml(i.receiveUrl || "")}">${icon("mail", 18)}<span>${escapeHtml(i.title || "Inbox")}</span></div>`
+        (r) =>
+          `<div class="nav-item ${state.activeChatRoom === r.roomId ? "active" : ""}" data-chat-room="${escapeHtml(r.roomId || "")}">${icon("chat", 18)}<span>${escapeHtml(r.name || r.roomId || "Chat")}</span>${r.messageCount ? `<span class="nav-badge">${r.messageCount}</span>` : ""}</div>`
       )
       .join("");
-    return `${list}${isProOrAbove() ? `<button class="btn btn-primary btn-sm" id="newInboxBtn" style="margin:12px 8px">New inbox</button>` : `<p class="inbox-gate">Receive Inbox requires Pro.</p><button class="btn btn-primary btn-sm upgrade-btn" data-upgrade="pro" style="margin:8px">Upgrade to Pro</button>`}`;
+    return `${create}${list || `<p style="padding:12px;font-size:12px;color:var(--t3)">No chats yet.</p>`}<button class="btn btn-ghost btn-sm" type="button" data-chat-room="" style="margin:8px">+ Create chat</button>`;
   }
   if (state.section === "settings") {
-    const items: { id: SettingsView; label: string; ic: IconName }[] = [
+    const items: { id: SettingsView; label: string; ic: IconName; accent?: boolean }[] = [
       { id: "general", label: "General", ic: "settings" },
       { id: "account", label: "Account", ic: "file" },
-      { id: "security", label: "Security", ic: "lock" },
-      { id: "billing", label: "Billing", ic: "star" },
+      { id: "security", label: "Security", ic: "lock", accent: true },
+      { id: "plans", label: "Plans", ic: "star" },
+      { id: "subscription", label: "Subscription", ic: "cloud" },
       { id: "apikeys", label: "API Keys", ic: "link" },
     ];
     return items
       .map(
         (i) =>
-          `<div class="nav-item ${state.settingsView === i.id ? "active" : ""}" data-settings-view="${i.id}">${icon(i.ic, 18)}<span>${i.label}</span></div>`
+          `<div class="nav-item ${state.settingsView === i.id ? "active" : ""} ${i.accent ? "nav-item-accent" : ""}" data-settings-view="${i.id}">${icon(i.ic, 18)}<span>${i.label}</span></div>`
       )
       .join("");
   }
@@ -264,13 +322,14 @@ function isProOrAbove(): boolean {
 
 function sidebarAccount(): string {
   const email = state.session?.email || "Account";
+  const initial = avatarInitial(email);
   return `
     <div class="sidebar-account glass">
       <button class="sidebar-account-btn" data-section="settings" data-settings-view="account" type="button">
-        <div class="account-avatar">${icon("file", 18)}</div>
+        <div class="account-avatar">${escapeHtml(initial)}</div>
         <div class="account-meta">
           <div class="account-email">${escapeHtml(email)}</div>
-          <div class="account-tier">${escapeHtml(tierLabel())} plan</div>
+          <div class="account-tier">${escapeHtml(tierLabel())} · ${escapeHtml(storageLabel())}</div>
         </div>
       </button>
       ${isFreeTier() ? `<button class="btn btn-primary btn-sm upgrade-btn" data-upgrade="pro" type="button">Upgrade to Pro</button>` : currentTier() === "pro" ? `<button class="btn btn-ghost btn-sm upgrade-btn" data-upgrade="creator" type="button">Upgrade to Creator</button>` : ""}
@@ -290,6 +349,9 @@ function filteredFiles(): FileItem[] {
     list.sort((a, b) => recentIds.indexOf(a.fileId) - recentIds.indexOf(b.fileId));
   } else if (state.filesView === "links") {
     list = list.filter((f) => f.customLink || f.isZeroKnowledge);
+  }
+  if (state.activeFolderId) {
+    list = list.filter((f) => f.folderId === state.activeFolderId);
   }
   if (state.search.trim()) {
     const q = state.search.toLowerCase();
@@ -333,11 +395,12 @@ function filesToolbarHtml(): string {
         </select>
       </div>
       ${sel > 0 ? `<div class="bulk-bar glass"><span>${sel} selected</span>
-        <button class="btn btn-ghost btn-sm" data-bulk="copy">Copy links</button>
-        <button class="btn btn-ghost btn-sm" data-bulk="download">Download</button>
-        <button class="btn btn-ghost btn-sm" data-bulk="star">Star</button>
-        <button class="btn btn-ghost btn-sm danger-text" data-bulk="delete">Delete</button>
-        <button class="btn btn-ghost btn-sm" id="clearSelection">Clear</button></div>` : ""}
+        <button class="btn btn-ghost btn-sm" data-bulk="copy" ${state.bulkStatus ? "disabled" : ""}>Copy links</button>
+        <button class="btn btn-ghost btn-sm" data-bulk="download" ${state.bulkStatus ? "disabled" : ""}>Download</button>
+        <button class="btn btn-ghost btn-sm" data-bulk="star" ${state.bulkStatus ? "disabled" : ""}>Star</button>
+        <button class="btn btn-ghost btn-sm danger-text" data-bulk="delete" ${state.bulkStatus ? "disabled" : ""}>Delete</button>
+        <button class="btn btn-ghost btn-sm" id="clearSelection" ${state.bulkStatus ? "disabled" : ""}>Clear</button></div>` : ""}
+      ${state.bulkStatus ? `<div class="bulk-progress glass"><span>${escapeHtml(state.bulkStatus)}</span><div class="progress-bar"><div class="progress-fill" style="width:100%;animation:pulse 1s ease infinite"></div></div></div>` : ""}
     </div>`;
 }
 
@@ -411,74 +474,79 @@ function renderTransfersContent(): string {
   `;
 }
 
+function embedFrameSrc(sitePath: string): string {
+  const token = state.session?.token || "";
+  const csrf = state.session?.csrf_token || "";
+  const next = sitePath.startsWith("/") ? sitePath : `/${sitePath}`;
+  const hash = csrf
+    ? `t=${encodeURIComponent(token)}&c=${encodeURIComponent(csrf)}&next=${encodeURIComponent(next)}`
+    : `t=${encodeURIComponent(token)}&next=${encodeURIComponent(next)}`;
+  return `https://fileshot.io/desktop-auth-bridge.html#${hash}`;
+}
+
 function renderInboxContent(): string {
-  return `<div class="embed-placeholder glass"><div class="display-h">Receive Inbox</div><p>Your receive inboxes load here. Select one in the sidebar or create a new inbox (Pro+).</p></div>`;
+  if (!isProOrAbove()) {
+    return `<div class="embed-placeholder glass"><div class="display-h">Receive Inbox</div><p>Receive Inbox requires Pro.</p><button class="btn btn-primary upgrade-btn" data-upgrade="pro" type="button" style="margin-top:12px">Upgrade to Pro</button></div>`;
+  }
+  const path = state.activeInboxPath || "/inbox.html?embed=1";
+  return `<div class="chat-embed"><iframe class="chat-frame" src="${escapeHtml(embedFrameSrc(path))}" title="Receive Inbox"></iframe></div>`;
 }
 
 function renderToolsContent(): string {
-  return `<div class="embed-placeholder glass"><div class="display-h">FileShot Tools</div><p>Select a tool from the sidebar.</p></div>`;
+  const path = state.toolsView === "virus-scanner" ? "virus-scanner" : state.toolsView;
+  return `<div class="chat-embed"><iframe class="chat-frame" src="${escapeHtml(embedFrameSrc(`/tools/${path}.html?embed=1`))}" title="FileShot Tools"></iframe></div>`;
 }
 
 function renderChatContent(): string {
-  return `<div class="embed-placeholder glass"><div class="display-h">Encrypted Chat</div><p>Chat loads in the panel beside this sidebar.</p></div>`;
+  const roomQ = state.activeChatRoom ? `&room=${encodeURIComponent(state.activeChatRoom)}` : "";
+  return `<div class="chat-embed"><iframe class="chat-frame" src="${escapeHtml(embedFrameSrc(`/chat.html?embed=1${roomQ}`))}" title="Encrypted Chat"></iframe></div>`;
 }
 
 function renderSettingsContent(): string {
   const s = state.settings!;
   if (state.settingsView === "general") {
-    return `
-      <div class="setting-row"><div><strong>Minimize to tray</strong><p>Hide window to tray instead of closing.</p></div>
-        <div class="toggle ${s.minimize_to_tray ? "on" : ""}" data-toggle="minimize_to_tray"></div></div>
-      <div class="setting-row"><div><strong>Start minimized</strong><p>Launch minimized to tray.</p></div>
-        <div class="toggle ${s.start_minimized ? "on" : ""}" data-toggle="start_minimized"></div></div>
-      <div class="setting-row"><div><strong>Chat notifications</strong><p>Enable chat notifications.</p></div>
-        <div class="toggle ${s.chat_notifications ? "on" : ""}" data-toggle="chat_notifications"></div></div>
-    `;
+    return `<div class="settings-panel">${renderGeneralSettings(s, state.usage, state.files.length)}</div>`;
   }
   if (state.settingsView === "account") {
-    return `
-      <div class="setting-row"><div><strong>Email</strong><p>${escapeHtml(state.session?.email || "")}</p></div></div>
-      <div class="setting-row"><div><strong>Plan</strong><p>${escapeHtml(tierLabel())}</p></div></div>
-      <div class="setting-row"><div><strong>Storage</strong><p>${escapeHtml(storageLabel())}</p></div></div>
-      ${isFreeTier() ? `<button class="btn btn-primary" data-upgrade="pro" type="button" style="margin-top:12px">Upgrade to Pro</button>` : currentTier() === "pro" ? `<button class="btn btn-ghost" data-upgrade="creator" type="button" style="margin-top:12px">Upgrade to Creator</button>` : ""}
-      <div style="margin-top:16px"><label>Billing interval</label>
-        <select id="billingIntervalSel" class="filter-select" style="margin-top:6px">
-          <option value="month" ${state.billingInterval === "month" ? "selected" : ""}>Monthly</option>
-          <option value="year" ${state.billingInterval === "year" ? "selected" : ""}>Annual (save)</option>
-        </select></div>
-      <button class="btn btn-ghost" data-open="https://fileshot.io/account-dashboard.html" style="margin-top:12px">Open web dashboard</button>
-      <button class="btn btn-ghost" style="margin-left:8px;margin-top:12px" id="logoutBtn">Sign out</button>
-    `;
+    return `<div class="settings-panel">${renderAccountSettings({
+      email: state.session?.email || "",
+      tier: currentTier(),
+      usage: state.usage,
+      fileCount: state.files.length,
+      fileBytes: totalFileBytes(),
+    })}</div>`;
   }
   if (state.settingsView === "security") {
-    return `
-      <p style="color:var(--t2);margin-bottom:16px;font-size:13px;line-height:1.5">Export encryption keys for backup. Import keys saved in your browser so copy-link and download work for web uploads.</p>
-      <button class="btn btn-primary" id="exportKeysBtn">Export master keys</button>
-      <div style="margin-top:24px">
-        <div class="form-group"><label>Import keys from browser</label>
-          <p style="font-size:12px;color:var(--t3);margin:6px 0 8px">On fileshot.io, open DevTools console and run:<br><code style="font-size:11px">JSON.stringify(Object.fromEntries(Object.entries(localStorage).filter(([k])=&gt;k.startsWith('zk_key_')).map(([k,v])=&gt;[k.slice(7),v])))</code></p>
-          <textarea id="importKeysJson" rows="5" placeholder='{"fileId":"hexkey",...}' style="width:100%;font-family:monospace;font-size:12px"></textarea>
-        </div>
-        <button class="btn btn-ghost" id="importKeysBtn">Import keys</button>
+    return `<div class="settings-panel">
+      <div class="settings-group">
+        <h3 class="settings-group-title">Encryption keys</h3>
+        <p class="settings-lead">Export keys for backup. Import browser keys so copy-link and download work for web uploads.</p>
+        <button class="btn btn-primary" id="exportKeysBtn">Export master keys</button>
       </div>
-      <div style="margin-top:24px">
+      <div class="settings-group">
+        <h3 class="settings-group-title">Import from browser</h3>
+        <p class="settings-lead" style="font-size:12px">On fileshot.io DevTools console:<br><code style="font-size:11px">JSON.stringify(Object.fromEntries(Object.entries(localStorage).filter(([k])=&gt;k.startsWith('zk_key_')).map(([k,v])=&gt;[k.slice(7),v])))</code></p>
+        <textarea id="importKeysJson" rows="5" placeholder='{"fileId":"hexkey",...}' class="settings-textarea"></textarea>
+        <button class="btn btn-ghost" id="importKeysBtn" style="margin-top:8px">Import keys</button>
+      </div>
+      <div class="settings-group">
+        <h3 class="settings-group-title">Password</h3>
         <div class="form-group"><label>Current password</label><input type="password" id="curPw" /></div>
         <div class="form-group"><label>New password</label><input type="password" id="newPw" /></div>
         <button class="btn btn-ghost" id="changePwBtn">Change password</button>
       </div>
-    `;
+    </div>`;
   }
-  if (state.settingsView === "billing") {
-    return `<p style="margin-bottom:12px">Storage: ${escapeHtml(storageLabel())}</p>
-      <p style="margin-bottom:12px">Plan: ${escapeHtml(tierLabel())}</p>
-      ${isFreeTier() ? `<button class="btn btn-primary" data-upgrade="pro" type="button">Upgrade to Pro</button>` : ""}
-      ${currentTier() === "pro" ? `<button class="btn btn-ghost" data-upgrade="creator" type="button" style="margin-left:8px">Upgrade to Creator</button>` : ""}
-      <button class="btn btn-ghost" data-open="https://fileshot.io/pricing.html" style="margin-left:8px">Pricing page</button>`;
+  if (state.settingsView === "plans") {
+    return `<div class="settings-panel settings-panel-wide">${renderPlansGrid(state.billingInterval, currentTier())}</div>`;
+  }
+  if (state.settingsView === "subscription") {
+    return `<div class="settings-panel">${renderSubscriptionSettings(currentTier(), state.usage)}</div>`;
   }
   const keys = state.apiKeys as Array<{ name?: string; id?: string }>;
-  return keys.length
+  return `<div class="settings-panel">${keys.length
     ? `<table class="list-table"><thead><tr><th>Key</th></tr></thead><tbody>${keys.map((k) => `<tr><td>${escapeHtml(k.name || k.id || "Key")}</td></tr>`).join("")}</tbody></table>`
-    : `<div class="empty-state"><p>No API keys. Creator tier required.</p><button class="btn btn-ghost" data-open="https://fileshot.io/account-dashboard.html#api-keys">Manage on web</button></div>`;
+    : `<div class="empty-state"><p>No API keys. Creator tier required.</p><button class="btn btn-ghost" data-open="https://fileshot.io/account-dashboard.html#api-keys">Manage on web</button></div>`}</div>`;
 }
 
 function mainContent(): string {
@@ -512,6 +580,26 @@ function mainHeader(): string {
   `;
 }
 
+function renderVersionsPanel(): string {
+  const p = state.versionsPanel;
+  if (!p) return "";
+  const rows =
+    p.versions.length === 0
+      ? `<p class="versions-empty">No version history for this file.</p>`
+      : `<table class="list-table"><thead><tr><th>Ver</th><th>Name</th><th>Size</th></tr></thead><tbody>${p.versions
+          .map(
+            (v) =>
+              `<tr><td>v${v.versionNumber ?? "?"}${v.isLatest ? " *" : ""}</td><td>${escapeHtml(v.fileName ?? "")}</td><td>${formatBytes(v.fileSize ?? 0)}</td></tr>`
+          )
+          .join("")}</tbody></table>`;
+  return `<div class="modal-backdrop" data-versions-close></div>
+    <div class="modal-panel glass" role="dialog">
+      <div class="modal-head"><strong>Versions — ${escapeHtml(p.fileName)}</strong><button type="button" class="ibtn" data-versions-close aria-label="Close">&#10005;</button></div>
+      ${rows}
+      <button type="button" class="btn btn-ghost btn-sm" data-versions-close style="margin-top:12px">Close</button>
+    </div>`;
+}
+
 function renderApp() {
   const pct = usagePct();
   appEl.innerHTML = `
@@ -541,6 +629,8 @@ function renderApp() {
       </main>
     </div>
     ${state.shareUrl ? `<div class="share-panel glass" id="sharePanel"><strong>Share link ready</strong><input class="share-url" readonly value="${escapeHtml(state.shareUrl)}" /><button class="btn btn-primary btn-sm" id="copyShareBtn">Copy link</button><button class="btn btn-ghost btn-sm" id="dismissShare">Dismiss</button></div>` : ""}
+    ${state.contextMenu ? renderFileContextMenu(state.contextMenu, { isFavorite: state.favorites.includes(state.contextMenu.fileId), folders: state.folders }) : ""}
+    ${renderVersionsPanel()}
   `;
   bindAppEvents();
   void loadZkeThumbs();
@@ -550,17 +640,92 @@ async function loadZkeThumbs() {
   if (state.section !== "files") return;
   for (const f of filteredFiles()) {
     if (!f.isZeroKnowledge || !state.keyringIds.has(f.fileId)) continue;
+    if (fileCategory(f.fileName, f.mimeType) !== "image") continue;
     const card = document.querySelector(`[data-file-id="${f.fileId}"] .file-thumb`);
-    if (!card || card.classList.contains("has-thumb")) continue;
+    if (!card || card.classList.contains("zke-loaded")) continue;
     try {
       const path = await api.previewThumb(f.fileId, true);
       if (!path) continue;
-      card.classList.add("has-thumb", "media");
-      card.innerHTML = `<img src="${convertFileSrc(path)}" alt="" loading="lazy" />`;
+      const theme = placeholderTheme(extFromName(f.fileName), f.fileName, f.mimeType);
+      const inner = placeholderInnerHtml(f);
+      card.classList.add("zke-loaded", "media", "has-preview", "placeholder", `ext-${theme.slug}`);
+      card.setAttribute("style", `--ph-a:${theme.c1};--ph-b:${theme.c2};--ph-accent:${theme.accent}`);
+      card.innerHTML = `<img src="${convertFileSrc(path)}" alt="" loading="lazy" onerror="this.classList.add('broken')" /><div class="file-thumb-placeholder fallback-only">${inner}</div>`;
     } catch {
       /* preview optional */
     }
   }
+}
+
+function closeContextMenu() {
+  state.contextMenu = null;
+}
+
+async function handleContextAction(action: string, el: HTMLElement) {
+  const menu = state.contextMenu;
+  if (!menu) return;
+  const file = state.files.find((f) => f.fileId === menu.fileId);
+  if (!file) {
+    closeContextMenu();
+    render();
+    return;
+  }
+
+  if (action === "close") {
+    closeContextMenu();
+    render();
+    return;
+  }
+  if (action === "move-toggle") {
+    state.contextMenu = { ...menu, submenu: menu.submenu === "move" ? undefined : "move" };
+    render();
+    return;
+  }
+
+  try {
+    if (action === "download") {
+      const path = await api.pickSavePath(file.fileName);
+      if (path) await api.downloadFile(file.fileId, path);
+    } else if (action === "public-link" || action === "share") {
+      const url = await api.fileShareUrl(file.fileId, file.customLink);
+      await navigator.clipboard.writeText(url);
+      state.shareUrl = url;
+    } else if (action === "favorite") {
+      state.favorites = await api.favoritesToggle(file.fileId);
+    } else if (action === "info") {
+      const lines = [
+        `Name: ${file.fileName}`,
+        `ID: ${file.fileId}`,
+        `Size: ${formatBytes(file.fileSize)}`,
+        `Created: ${formatDate(file.createdAt)}`,
+        `Downloads: ${file.downloadCount}${file.maxDownloads ? ` / ${file.maxDownloads}` : ""}`,
+        file.isZeroKnowledge ? "Zero-knowledge encrypted" : "",
+        file.customLink ? `Custom link: ${file.customLink}` : "",
+      ].filter(Boolean);
+      alert(lines.join("\n"));
+    } else if (action === "move-folder") {
+      const folderId = el.dataset.folderId || null;
+      await api.filesMove([file.fileId], folderId);
+      await refreshData();
+    } else if (action === "copy-id") {
+      await navigator.clipboard.writeText(file.fileId);
+    } else if (action === "versions") {
+      const res = await api.filesVersions(file.fileId);
+      const versions = (res as { versions?: Array<{ versionNumber?: number; fileName?: string; fileSize?: number; isLatest?: boolean }> }).versions || [];
+      state.versionsPanel = { fileId: file.fileId, fileName: file.fileName, versions };
+    } else if (action === "trash") {
+      if (confirm(`Move "${file.fileName}" to trash?`)) {
+        await api.filesDelete(file.fileId);
+        await refreshData();
+      }
+    }
+  } catch (e) {
+    alert(String(e));
+    log(`context action ${action} error: ${e}`);
+  }
+
+  closeContextMenu();
+  render();
 }
 
 function render() {
@@ -594,9 +759,14 @@ async function refreshData() {
     ]);
     const files = (filesRes as { files?: unknown[] }).files || [];
     state.files = files.map((f) => normalizeFile(f as Record<string, unknown>));
-    state.usage = normalizeUsage(usageRes as Record<string, unknown>, state.session?.tier);
-    if (state.session && state.usage.tier) {
-      state.session.tier = state.usage.tier;
+    const usageRaw = usageRes as Record<string, unknown>;
+    const profileTier = effectiveTierFromUser(state.userProfile);
+    const usageTier = normalizeTierName(String(usageRaw.tier ?? "free"));
+    const sessionTier = state.session?.tier ? normalizeTierName(state.session.tier) : "free";
+    const tier = bestTier(profileTier, usageTier, sessionTier);
+    state.usage = normalizeUsage({ ...usageRaw, tier }, tier);
+    if (state.session) {
+      state.session.tier = tier;
     }
     state.favorites = favorites;
     state.activity = activity;
@@ -625,13 +795,21 @@ async function syncProfile() {
     if (user) {
       state.userProfile = user;
       if (user.email) state.session!.email = String(user.email);
-      const tier = effectiveTierFromUser(user);
+      const tier = bestTier(
+        effectiveTierFromUser(user),
+        sub && (sub as { tier?: string }).tier
+          ? normalizeTierName(String((sub as { tier?: string }).tier))
+          : null,
+        state.session?.tier
+      );
       state.session!.tier = tier;
       if (state.usage) state.usage.tier = tier;
+      log(`syncProfile tier=${tier}`);
     }
     if (sub && state.userProfile) {
       state.userProfile.subscription_details = sub;
     }
+    state.session = await api.authSyncSession();
     if (!state.session?.csrf_token) {
       await api.authRefreshCsrf();
       state.session = await api.authGetSession();
@@ -639,6 +817,14 @@ async function syncProfile() {
   } catch (e) {
     log(`syncProfile error: ${e}`);
   }
+}
+
+async function onAppFocus() {
+  if (!state.session?.token) return;
+  log("app focus — refreshing profile");
+  await syncProfile();
+  await refreshData();
+  render();
 }
 
 async function startUpgrade(tier: string) {
@@ -649,9 +835,6 @@ async function startUpgrade(tier: string) {
     if (!url) throw new Error("No checkout URL returned");
     log(`upgrade checkout: ${tier} ${state.billingInterval}`);
     openUrl(url);
-    setTimeout(() => {
-      syncProfile().then(() => refreshData().then(render));
-    }, 8000);
   } catch (e) {
     state.error = String(e);
     log(`upgrade error: ${e}`);
@@ -664,29 +847,17 @@ async function loadSectionData() {
     try {
       const res = await api.inboxList();
       state.inbox = (res as { inboxes?: unknown[] }).inboxes || [];
-      if (isProOrAbove()) {
-        await api.embedOpen("https://fileshot.io/inbox.html?embed=1");
-      } else {
-        api.embedClose();
-      }
     } catch {
       state.inbox = [];
     }
-  } else if (state.section === "chat") {
+  }
+  if (state.section === "chat") {
     try {
-      await api.embedOpen("https://fileshot.io/chat.html?embed=1");
-    } catch (e) {
-      log(`chatOpen error: ${e}`);
+      const res = await api.chatRooms();
+      state.chatRooms = (res as { rooms?: unknown[] }).rooms || [];
+    } catch {
+      state.chatRooms = [];
     }
-  } else if (state.section === "tools") {
-    const path = state.toolsView === "virus-scanner" ? "virus-scanner" : state.toolsView;
-    try {
-      await api.embedOpen(`https://fileshot.io/tools/${path}?embed=1`);
-    } catch (e) {
-      log(`tools embed error: ${e}`);
-    }
-  } else {
-    api.embedClose().catch(() => {});
   }
   if (state.settingsView === "apikeys") {
     try {
@@ -769,7 +940,13 @@ function bindAuthEvents() {
 function bindAppEvents() {
   document.querySelectorAll("[data-section]").forEach((el) => {
     el.addEventListener("click", async () => {
-      state.section = (el as HTMLElement).dataset.section as Section;
+      const next = (el as HTMLElement).dataset.section as Section;
+      if (state.section !== next) {
+        api.embedClose().catch(() => {});
+        if (next !== "inbox") state.activeInboxPath = null;
+        if (next !== "chat") state.activeChatRoom = null;
+      }
+      state.section = next;
       await loadSectionData();
       render();
     });
@@ -792,11 +969,67 @@ function bindAppEvents() {
       alert(String(e));
     }
   });
-  document.querySelectorAll("[data-inbox-open]").forEach((el) => {
+  document.querySelectorAll("[data-inbox-path]").forEach((el) => {
     el.addEventListener("click", () => {
-      const url = (el as HTMLElement).dataset.inboxOpen;
+      const path = (el as HTMLElement).dataset.inboxPath || null;
+      state.activeInboxPath = path;
+      render();
+    });
+  });
+  document.querySelectorAll("[data-inbox-external]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const url = (el as HTMLElement).dataset.inboxExternal;
       if (url) openUrl(url);
     });
+  });
+  document.querySelectorAll("[data-chat-room]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const room = (el as HTMLElement).dataset.chatRoom || null;
+      state.activeChatRoom = room || null;
+      render();
+    });
+  });
+  document.querySelectorAll("[data-billing]").forEach((el) => {
+    el.addEventListener("click", () => {
+      state.billingInterval = (el as HTMLElement).dataset.billing as "month" | "year";
+      render();
+    });
+  });
+  document.querySelectorAll("[data-section-jump]").forEach((el) => {
+    el.addEventListener("click", () => {
+      state.section = "settings";
+      state.settingsView = (el as HTMLElement).dataset.sectionJump as SettingsView;
+      render();
+    });
+  });
+  document.getElementById("themeSel")?.addEventListener("change", async (e) => {
+    if (!state.settings) return;
+    const theme = (e.target as HTMLSelectElement).value;
+    state.settings.theme = theme;
+    applyTheme(theme);
+    await api.settingsSet(state.settings);
+  });
+  document.getElementById("deleteAllFilesBtn")?.addEventListener("click", async () => {
+    if (!state.files.length) return;
+    const ids = state.files.map((f) => f.fileId);
+    if (!confirm(`Delete all ${ids.length} files permanently? This cannot be undone.`)) return;
+    state.bulkStatus = `Deleting 0/${ids.length}…`;
+    render();
+    let failed = 0;
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      state.bulkStatus = `Deleting ${i + 1}/${ids.length}…`;
+      render();
+      try {
+        await api.filesDelete(id);
+      } catch {
+        failed++;
+      }
+    }
+    state.bulkStatus = null;
+    await refreshData();
+    render();
+    if (failed) alert(`Failed to delete ${failed} file(s).`);
   });
   document.getElementById("toolbarSearch")?.addEventListener("input", (e) => {
     state.search = (e.target as HTMLInputElement).value;
@@ -819,6 +1052,31 @@ function bindAppEvents() {
     state.selectedIds = on ? new Set(files.map((f) => f.fileId)) : new Set();
     render();
   });
+  document.querySelectorAll(".file-card").forEach((card) => {
+    card.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const ev = e as MouseEvent;
+      const id = (card as HTMLElement).dataset.fileId!;
+      state.contextMenu = { fileId: id, x: ev.clientX, y: ev.clientY };
+      render();
+    });
+  });
+  document.querySelectorAll("[data-ctx]").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      void handleContextAction((el as HTMLElement).dataset.ctx!, el as HTMLElement);
+    });
+  });
+  if (state.contextMenu) {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        closeContextMenu();
+        render();
+        document.removeEventListener("keydown", onKey);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+  }
   document.querySelectorAll(".file-cb").forEach((el) => {
     el.addEventListener("change", (e) => {
       const id = (el as HTMLElement).dataset.id!;
@@ -836,28 +1094,71 @@ function bindAppEvents() {
     el.addEventListener("click", async () => {
       const action = (el as HTMLElement).dataset.bulk!;
       const ids = [...state.selectedIds];
-      if (!ids.length) return;
+      if (!ids.length || state.bulkStatus) return;
       if (action === "delete" && !confirm(`Delete ${ids.length} file(s)?`)) return;
-      for (const id of ids) {
+
+      const label =
+        action === "delete"
+          ? "Deleting"
+          : action === "download"
+            ? "Downloading"
+            : action === "copy"
+              ? "Copying links"
+              : "Updating";
+      const failures: string[] = [];
+      state.bulkStatus = `${label} 0/${ids.length}…`;
+      render();
+
+      for (let i = 0; i < ids.length; i++) {
+        const id = ids[i];
         const file = state.files.find((f) => f.fileId === id);
-        if (action === "delete") await api.filesDelete(id);
-        else if (action === "star") state.favorites = await api.favoritesToggle(id);
-        else if (action === "copy" && file) {
-          const url = await api.fileShareUrl(file.fileId, file.customLink);
-          await navigator.clipboard.writeText(url);
-        } else if (action === "download" && file) {
-          const path = await api.pickSavePath(file.fileName);
-          if (path) await api.downloadFile(id, path);
+        state.bulkStatus = `${label} ${i + 1}/${ids.length}…`;
+        render();
+        try {
+          if (action === "delete") {
+            await api.filesDelete(id);
+            log(`bulk delete ok: ${id}`);
+          } else if (action === "star") {
+            state.favorites = await api.favoritesToggle(id);
+          } else if (action === "copy" && file) {
+            const url = await api.fileShareUrl(file.fileId, file.customLink);
+            await navigator.clipboard.writeText(url);
+          } else if (action === "download" && file) {
+            const path = await api.pickSavePath(file.fileName);
+            if (path) await api.downloadFile(id, path);
+          }
+        } catch (e) {
+          failures.push(id);
+          log(`bulk ${action} failed ${id}: ${e}`);
         }
       }
+
       state.selectedIds.clear();
+      state.bulkStatus = null;
       await refreshData();
       render();
+      if (failures.length) {
+        alert(`${action} failed for ${failures.length} file(s). Check app log for details.`);
+      }
     });
   });
   document.querySelectorAll("[data-files-view]").forEach((el) => {
     el.addEventListener("click", () => {
       state.filesView = (el as HTMLElement).dataset.filesView as FilesView;
+      state.activeFolderId = null;
+      render();
+    });
+  });
+  document.querySelectorAll("[data-folder-id]").forEach((el) => {
+    el.addEventListener("click", () => {
+      state.activeFolderId = (el as HTMLElement).dataset.folderId || null;
+      state.filesView = "drive";
+      render();
+    });
+  });
+  document.querySelectorAll("[data-versions-close]").forEach((el) => {
+    el.addEventListener("click", () => {
+      state.versionsPanel = null;
       render();
     });
   });
@@ -938,12 +1239,19 @@ function bindAppEvents() {
   });
   document.querySelectorAll("[data-toggle]").forEach((el) => {
     el.addEventListener("click", async () => {
-      const key = (el as HTMLElement).dataset.toggle as keyof AppSettings;
       if (!state.settings) return;
+      const key = (el as HTMLElement).dataset.toggle as
+        | "autostart"
+        | "minimize_to_tray"
+        | "start_minimized";
       state.settings[key] = !state.settings[key];
       await api.settingsSet(state.settings);
       render();
     });
+  });
+  document.getElementById("refreshSubscriptionBtn")?.addEventListener("click", async () => {
+    await onAppFocus();
+    alert(isPremiumTier(currentTier()) ? `Subscription active: ${tierLabel()}` : "Still showing Free — try again in a moment if you just paid.");
   });
   document.getElementById("logoutBtn")?.addEventListener("click", async () => {
     await api.authLogout();
@@ -1030,6 +1338,9 @@ async function boot() {
       await api.authMe();
       await refreshData();
       state.settings = await api.settingsGet();
+      state.settings.notification_sound = state.settings.notification_sound ?? true;
+      state.settings.theme = state.settings.theme || "system";
+      applyTheme(state.settings.theme);
       log("boot ok");
     } catch (e) {
       log(`boot auth failed: ${e}`);
@@ -1044,6 +1355,20 @@ async function boot() {
     if (state.session?.token) render();
   });
   await api.onTrayQuickUpload(() => doUpload());
+
+  window.addEventListener("focus", () => {
+    void onAppFocus();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") void onAppFocus();
+  });
+  try {
+    getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (focused) void onAppFocus();
+    });
+  } catch (e) {
+    log(`window focus hook: ${e}`);
+  }
 }
 
 boot();

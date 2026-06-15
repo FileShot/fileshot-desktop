@@ -9,6 +9,18 @@ pub struct AppSettings {
     pub minimize_to_tray: bool,
     pub start_minimized: bool,
     pub chat_notifications: bool,
+    #[serde(default = "default_notification_sound")]
+    pub notification_sound: bool,
+    #[serde(default = "default_theme")]
+    pub theme: String,
+}
+
+fn default_theme() -> String {
+    "system".to_string()
+}
+
+fn default_notification_sound() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,6 +94,8 @@ impl AppState {
                 minimize_to_tray: true,
                 start_minimized: false,
                 chat_notifications: true,
+                notification_sound: true,
+                theme: "system".to_string(),
             }),
             keyring: RwLock::new(HashMap::new()),
             transfers: RwLock::new(Vec::new()),

@@ -1,6 +1,6 @@
 {
   "productName": "FileShot",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "identifier": "io.fileshot.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -23,7 +23,11 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; frame-src 'self' https://fileshot.io https://*.fileshot.io; connect-src 'self' https://api.fileshot.io wss://api.fileshot.io https://fileshot.io; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https://api.fileshot.io https://fileshot.io; script-src 'self'"
+      "csp": "default-src 'self'; frame-src 'self' https://fileshot.io https://*.fileshot.io; connect-src 'self' https://api.fileshot.io wss://api.fileshot.io https://fileshot.io; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: asset: http://asset.localhost https://api.fileshot.io https://fileshot.io; script-src 'self'",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPCACHE/**", "$APPDATA/**", "$APPLOCALDATA/**"]
+      }
     }
   },
   "bundle": {

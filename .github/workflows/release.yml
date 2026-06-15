@@ -82,6 +82,6 @@ jobs:
             | Linux x64 | `.AppImage` and `.deb` |
 
             [Source](https://github.com/FileShot/fileshot-desktop) · [Support signing](https://fileshot.io/donate)
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

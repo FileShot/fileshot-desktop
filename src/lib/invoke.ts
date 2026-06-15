@@ -14,6 +14,8 @@ export interface AppSettings {
   minimize_to_tray: boolean;
   start_minimized: boolean;
   chat_notifications: boolean;
+  notification_sound: boolean;
+  theme: string;
 }
 
 export interface TransferItem {
@@ -63,11 +65,16 @@ export const api = {
   authLogout: () => invoke<void>("auth_logout"),
   authMe: () => invoke<Record<string, unknown>>("auth_me"),
   authRefreshCsrf: () => invoke<void>("auth_refresh_csrf"),
+  authSyncSession: () => invoke<SessionState>("auth_sync_session"),
   filesList: () => invoke<Record<string, unknown>>("files_list"),
   filesUsage: () => invoke<Record<string, unknown>>("files_usage"),
   filesDelete: (fileId: string) => invoke<void>("files_delete", { fileId }),
   filesUpdate: (fileId: string, payload: Record<string, unknown>) =>
     invoke<Record<string, unknown>>("files_update", { fileId, payload }),
+  filesMove: (fileIds: string[], folderId: string | null) =>
+    invoke<Record<string, unknown>>("files_move", { fileIds, folderId }),
+  filesVersions: (fileId: string) =>
+    invoke<Record<string, unknown>>("files_versions", { fileId }),
   foldersList: () => invoke<Record<string, unknown>>("folders_list"),
   foldersCreate: (name: string, parentId?: string) =>
     invoke<Record<string, unknown>>("folders_create", { name, parentId }),
@@ -80,6 +87,14 @@ export const api = {
   paymentsSubscription: () => invoke<Record<string, unknown>>("payments_subscription"),
   paymentsCheckout: (tier: string, interval?: string) =>
     invoke<{ url?: string; sessionId?: string }>("payments_checkout", { tier, interval }),
+  paymentsConfirmCheckout: (sessionId: string) =>
+    invoke<{
+      success?: boolean;
+      pending?: boolean;
+      applied?: boolean;
+      tier?: string;
+      user?: Record<string, unknown>;
+    }>("payments_confirm_checkout", { sessionId }),
   inboxCreate: (title: string, description?: string) =>
     invoke<Record<string, unknown>>("inbox_create", { title, description }),
   inboxDelete: (requestId: string) => invoke<void>("inbox_delete", { requestId }),

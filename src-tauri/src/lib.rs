@@ -172,6 +172,32 @@ async fn files_update(
 }
 
 #[tauri::command]
+async fn files_move(
+    ctx: State<'_, AppCtx>,
+    file_ids: Vec<String>,
+    folder_id: Option<String>,
+) -> Result<serde_json::Value, String> {
+    ctx.api
+        .post_json(
+            &ctx.state,
+            "/files/move",
+            &json!({ "fileIds": file_ids, "folderId": folder_id }),
+            true,
+        )
+        .await
+}
+
+#[tauri::command]
+async fn files_versions(
+    ctx: State<'_, AppCtx>,
+    file_id: String,
+) -> Result<serde_json::Value, String> {
+    ctx.api
+        .get_json(&ctx.state, &format!("/files/versions/{file_id}"))
+        .await
+}
+
+#[tauri::command]
 async fn folders_list(ctx: State<'_, AppCtx>) -> Result<serde_json::Value, String> {
     ctx.api.get_json(&ctx.state, "/folders").await
 }
@@ -257,6 +283,43 @@ async fn chat_open(ctx: State<'_, AppCtx>, app: AppHandle) -> Result<(), String>
 #[tauri::command]
 fn chat_close(app: AppHandle) {
     embed::embed_close(&app);
+}
+
+#[tauri::command]
+async fn auth_sync_session(ctx: State<'_, AppCtx>, app: AppHandle) -> Result<SessionState, String> {
+    let res = ctx.api.get_json(&ctx.state, "/auth/me").await?;
+    if let Some(user) = res.get("user") {
+        let mut session = ctx.state.session.write();
+        if let Some(email) = user.get("email").and_then(|v| v.as_str()) {
+            session.email = Some(email.to_string());
+        }
+        if let Some(id) = user.get("id").and_then(|v| v.as_i64()) {
+            session.user_id = Some(id);
+        }
+        session.tier = user
+            .get("effective_tier")
+            .or_else(|| user.get("subscription_tier"))
+            .or_else(|| user.get("tier"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+    }
+    persist_session(&app, &ctx.state).await?;
+    Ok(ctx.state.session.read().clone())
+}
+
+#[tauri::command]
+async fn payments_confirm_checkout(
+    ctx: State<'_, AppCtx>,
+    session_id: String,
+) -> Result<serde_json::Value, String> {
+    ctx.api
+        .post_json(
+            &ctx.state,
+            "/payments/confirm-checkout",
+            &json!({ "sessionId": session_id }),
+            true,
+        )
+        .await
 }
 
 #[tauri::command]
@@ -422,8 +485,20 @@ async fn settings_set(
     app: AppHandle,
     settings: AppSettings,
 ) -> Result<(), String> {
-    *ctx.state.settings.write() = settings;
+    *ctx.state.settings.write() = settings.clone();
     persist_settings(&app, &ctx.state).await?;
+    sync_autostart(&app, settings.autostart)?;
+    Ok(())
+}
+
+fn sync_autostart(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let autolaunch = app.autolaunch();
+    if enabled {
+        autolaunch.enable().map_err(|e| e.to_string())?;
+    } else {
+        autolaunch.disable().map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -548,6 +623,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![]),
+        ))
         .manage(AppCtx {
             state: state.clone(),
             api: api.clone(),
@@ -555,6 +634,13 @@ pub fn run() {
         .setup(move |app| {
             load_session(app.handle(), &state);
             setup_tray(app.handle())?;
+            let settings = state.settings.read().clone();
+            let _ = sync_autostart(app.handle(), settings.autostart);
+            if settings.start_minimized {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.hide();
+                }
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -580,6 +666,8 @@ pub fn run() {
             files_usage,
             files_delete,
             files_update,
+            files_move,
+            files_versions,
             folders_list,
             folders_create,
             inbox_list,
@@ -596,7 +684,9 @@ pub fn run() {
             user_2fa_status,
             payments_subscription,
             payments_checkout,
+            payments_confirm_checkout,
             auth_refresh_csrf,
+            auth_sync_session,
             file_share_url,
             keyring_has,
             keyring_ids,

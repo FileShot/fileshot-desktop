@@ -24,6 +24,23 @@ export function effectiveTierFromUser(user: Record<string, unknown> | null | und
   );
 }
 
+export function tierRank(tier: string): number {
+  const t = normalizeTierName(tier);
+  if (t === "creator") return 2;
+  if (t === "pro") return 1;
+  return 0;
+}
+
+export function bestTier(...tiers: Array<string | null | undefined>): string {
+  let best = "free";
+  for (const raw of tiers) {
+    if (!raw) continue;
+    const t = normalizeTierName(raw);
+    if (tierRank(t) > tierRank(best)) best = t;
+  }
+  return best;
+}
+
 export function isPremiumTier(tier: string): boolean {
   const t = normalizeTierName(tier);
   return t === "pro" || t === "creator";

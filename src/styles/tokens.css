@@ -45,3 +45,16 @@
   --radius: var(--r12);
   --radius-sm: var(--r8);
 }
+
+html[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eef0f6;
+  --bg2: #f7f8fc;
+  --sur: rgba(255, 255, 255, 0.85);
+  --sur2: rgba(0, 0, 0, 0.04);
+  --bdr: rgba(0, 0, 0, 0.08);
+  --bdr2: rgba(0, 0, 0, 0.14);
+  --t1: #12141c;
+  --t2: #4a4f63;
+  --t3: #7a8096;
+}
