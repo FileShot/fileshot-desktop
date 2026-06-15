@@ -1,136 +1,25 @@
 {
   "name": "fileshot-desktop",
-  "version": "1.4.10",
-  "description": "FileShot.io Desktop Application - Fast, Private File Sharing",
-  "main": "main.js",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "FileShot Desktop — encrypted file sharing",
   "scripts": {
-    "start": "electron .",
-    "start:prod": "electron .",
-    "dev": "electron . --dev",
-    "sync-frontend": "node scripts/sync-frontend.js",
-    "prebuild": "npm run sync-frontend",
-    "build": "electron-builder",
-    "build:win": "electron-builder --win",
-    "build:mac": "electron-builder --mac",
-    "build:linux": "electron-builder --linux",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder"
-  },
-  "keywords": [
-    "file-sharing",
-    "encryption",
-    "zero-knowledge",
-    "privacy",
-    "fileshot"
-  ],
-  "author": {
-    "name": "FileShot.io",
-    "email": "admin@fileshot.io",
-    "url": "https://fileshot.io"
-  },
-  "license": "MIT",
-  "build": {
-    "appId": "io.fileshot.desktop",
-    "productName": "FileShot",
-    "copyright": "Copyright © 2025 FileShot.io",
-    "directories": {
-      "output": "dist",
-      "buildResources": "build"
-    },
-    "files": [
-      "main.js",
-      "preload.js",
-      "utils/**/*",
-      "renderer/**/*",
-      "assets/**/*",
-      "node_modules/**/*",
-      "package.json"
-    ],
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": ["x64", "ia32"]
-        }
-      ],
-      "icon": "build/icon.ico",
-      "artifactName": "FileShot-Setup-${version}.${ext}",
-      "publisherName": "FileShot.io",
-      "verifyUpdateCodeSignature": false,
-      "sign": null,
-      "signingHashAlgorithms": []
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "allowElevation": true,
-      "createDesktopShortcut": "always",
-      "createStartMenuShortcut": true,
-      "shortcutName": "FileShot",
-      "installerIcon": "build/icon.ico",
-      "uninstallerIcon": "build/icon.ico",
-      "installerHeaderIcon": "build/icon.ico",
-      "installerSidebar": null,
-      "uninstallerSidebar": null,
-      "deleteAppDataOnUninstall": false,
-      "runAfterFinish": true,
-      "menuCategory": true,
-      "license": null,
-      "installerLanguages": ["en_US"]
-    },
-    "mac": {
-      "target": ["dmg", "zip"],
-      "icon": "build/icon.icns",
-      "category": "public.app-category.productivity",
-      "hardenedRuntime": false,
-      "gatekeeperAssess": false,
-      "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist"
-    },
-    "dmg": {
-      "contents": [
-        {
-          "x": 130,
-          "y": 220
-        },
-        {
-          "x": 410,
-          "y": 220,
-          "type": "link",
-          "path": "/Applications"
-        }
-      ],
-      "window": {
-        "width": 540,
-        "height": 380
-      }
-    },
-    "linux": {
-      "target": ["AppImage", "deb", "rpm"],
-      "icon": "build/icons",
-      "category": "Network",
-      "maintainer": "admin@fileshot.io",
-      "vendor": "FileShot.io",
-      "synopsis": "Fast, Private File Sharing"
-    },
-    "publish": {
-      "provider": "github",
-      "owner": "FileShot",
-      "repo": "fileshot-desktop",
-      "private": false
-    }
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
   },
   "dependencies": {
-    "electron-updater": "^6.1.7",
-    "axios": "^1.6.5",
-    "form-data": "^4.0.0",
-    "electron-store": "^8.1.0",
-    "node-notifier": "^10.0.1",
-    "chokidar": "^3.6.0"
+    "@tauri-apps/api": "^2.4.0",
+    "@tauri-apps/plugin-dialog": "^2.2.0",
+    "@tauri-apps/plugin-opener": "^2.2.6",
+    "@tauri-apps/plugin-shell": "^2.2.0",
+    "@tauri-apps/plugin-store": "^2.2.0"
   },
   "devDependencies": {
-    "electron": "^28.1.0",
-    "electron-builder": "^24.9.1"
+    "@tauri-apps/cli": "^2.4.0",
+    "typescript": "~5.7.3",
+    "vite": "^6.2.0"
   }
 }
