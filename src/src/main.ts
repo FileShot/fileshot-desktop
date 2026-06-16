@@ -512,7 +512,7 @@ function renderTransfersContent(): string {
   const uploadBlock = uploads.length
     ? `<div class="transfer-section"><div class="transfer-section-title">Uploads</div><div class="transfer-list">${renderTransferRows(uploads)}</div></div>`
     : "";
-  return `${downloadBlock}${uploadBlock}`;
+  return `<div class="panel-scroll">${downloadBlock}${uploadBlock}</div>`;
 }
 
 function embedSitePath(): string | null {
