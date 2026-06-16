@@ -18,6 +18,7 @@ export interface AppSettings {
   theme: string;
   master_key_enabled?: boolean;
   master_key?: string | null;
+  vault_sync_enabled?: boolean;
 }
 
 export interface UploadOptions {

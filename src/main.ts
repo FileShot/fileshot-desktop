@@ -512,7 +512,7 @@ function renderTransfersContent(): string {
   const uploadBlock = uploads.length
     ? `<div class="transfer-section"><div class="transfer-section-title">Uploads</div><div class="transfer-list">${renderTransferRows(uploads)}</div></div>`
     : "";
-  return `${downloadBlock}${uploadBlock}`;
+  return `<div class="panel-scroll">${downloadBlock}${uploadBlock}</div>`;
 }
 
 function embedSitePath(): string | null {
@@ -631,26 +631,21 @@ function renderSettingsContent(): string {
     })}</div>`;
   }
   if (state.settingsView === "security") {
-    const pro = isPremiumTier(currentTier());
     return `<div class="settings-panel">
       <div class="settings-group">
-        <h3 class="settings-group-title">Encryption keys</h3>
-        <p class="settings-lead">Export keys for backup. Import browser keys so copy-link and download work for web uploads.</p>
-        <button class="btn btn-primary" id="exportKeysBtn">Export master keys</button>
+        <h3 class="settings-group-title">Encryption &amp; key sync</h3>
+        <p class="settings-lead">Your encryption keys are saved to your FileShot account so uploads work after reinstall or on other devices.</p>
+        ${settingRow(
+          "Sync keys across devices",
+          "Automatically save and restore zero-knowledge keys when signed in.",
+          toggleHtml("vault_sync_enabled", s.vault_sync_enabled !== false)
+        )}
+        <button class="btn btn-ghost btn-sm" type="button" data-open="https://fileshot.io/my-files.html#vault-settings" style="margin-top:10px">View or change encryption password</button>
       </div>
       <div class="settings-group">
-        <h3 class="settings-group-title">Upload master key ${pro ? "" : `<span class="pro-pill">PRO</span>`}</h3>
-        <p class="settings-lead">Use one password for all protected uploads from this app. Keys stay in your link when password is off (same as the website).</p>
-        ${settingRow(
-          "Enable master key",
-          "When password protect is on during upload, use this key instead of typing each time.",
-          toggleHtml("master_key_enabled", !!(s.master_key_enabled && pro))
-        )}
-        <div class="form-group" style="margin-top:12px">
-          <label>Master key</label>
-          <input type="password" id="masterKeyInput" placeholder="${pro ? "At least 4 characters" : "Pro required"}" value="${escapeHtml(s.master_key || "")}" ${pro ? "" : "disabled"} />
-        </div>
-        <button class="btn btn-ghost btn-sm" type="button" id="saveMasterKeyBtn" ${pro ? "" : "disabled"}>Save master key</button>
+        <h3 class="settings-group-title">Encryption keys (local backup)</h3>
+        <p class="settings-lead">Export keys for backup. Import browser keys so copy-link and download work for web uploads.</p>
+        <button class="btn btn-primary" id="exportKeysBtn">Export local keys</button>
       </div>
       <div class="settings-group">
         <h3 class="settings-group-title">Import from browser</h3>
@@ -659,7 +654,7 @@ function renderSettingsContent(): string {
         <button class="btn btn-ghost" id="importKeysBtn" style="margin-top:8px">Import keys</button>
       </div>
       <div class="settings-group">
-        <h3 class="settings-group-title">Password</h3>
+        <h3 class="settings-group-title">Account password</h3>
         <div class="form-group"><label>Current password</label><input type="password" id="curPw" /></div>
         <div class="form-group"><label>New password</label><input type="password" id="newPw" /></div>
         <button class="btn btn-ghost" id="changePwBtn">Change password</button>
@@ -1522,7 +1517,8 @@ function bindAppEvents() {
         | "autostart"
         | "minimize_to_tray"
         | "start_minimized"
-        | "master_key_enabled";
+        | "master_key_enabled"
+        | "vault_sync_enabled";
       if (key === "master_key_enabled" && !isPremiumTier(currentTier())) {
         showToast("Master key requires Pro.", "error");
         return;
@@ -1544,17 +1540,6 @@ function bindAppEvents() {
     await api.authLogout();
     state.session = null;
     render();
-  });
-  document.getElementById("saveMasterKeyBtn")?.addEventListener("click", async () => {
-    if (!state.settings || !isPremiumTier(currentTier())) return;
-    const val = (document.getElementById("masterKeyInput") as HTMLInputElement | null)?.value.trim() || "";
-    if (val && val.length < 4) {
-      showToast("Master key must be at least 4 characters.", "error");
-      return;
-    }
-    state.settings.master_key = val || null;
-    await api.settingsSet(state.settings);
-    showToast("Master key saved.", "success");
   });
   document.getElementById("exportKeysBtn")?.addEventListener("click", async () => {
     const json = await api.exportKeyring();
