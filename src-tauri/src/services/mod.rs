@@ -195,6 +195,21 @@ pub fn app_data_file(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
     Ok(dir.join(name))
 }
 
+pub fn append_app_log(app: &AppHandle, message: &str) {
+    if let Ok(path) = app_data_file(app, "desktop.log") {
+        let line = format!(
+            "{} {}\n",
+            chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ"),
+            message
+        );
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
+    }
+}
+
 pub async fn persist_session(app: &AppHandle, state: &SharedState) -> Result<(), String> {
     let path = app_data_file(app, "session.json")?;
     let session = state.session.read().clone();

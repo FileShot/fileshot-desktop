@@ -1,4 +1,4 @@
-use crate::services::{add_activity, emit_transfer_update, persist_keyring, share::build_share_url, ApiClient};
+use crate::services::{add_activity, append_app_log, emit_transfer_update, persist_keyring, share::build_share_url, ApiClient};
 use crate::state::{KeyringEntry, SharedState, TransferItem};
 use crate::zke::{self, DEFAULT_CHUNK_SIZE};
 use mime_guess::from_path;
@@ -27,11 +27,14 @@ pub async fn upload_files(
     paths: Vec<String>,
     options: UploadOptions,
 ) -> Result<Vec<String>, String> {
+    let mut opts = options;
+    clamp_upload_options(&state, &mut opts)?;
     let mut results = Vec::new();
     for path_str in paths {
-        match upload_single_file(app.clone(), state.clone(), api.clone(), &path_str, &options).await {
+        match upload_single_file(app.clone(), state.clone(), api.clone(), &path_str, &opts).await {
             Ok(url) => results.push(url),
             Err(e) => {
+                append_app_log(&app, &format!("upload failed {path_str}: {e}"));
                 let _ = app.emit("upload-error", json!({ "path": path_str, "error": e }));
             }
         }
@@ -76,6 +79,11 @@ async fn upload_single_file(
     }
     push_transfer_emit(&state, &app);
 
+    append_app_log(
+        &app,
+        &format!("encrypt start: {} ({} bytes)", path_str, plain_size),
+    );
+
     let tmp_dir = app
         .path()
         .app_cache_dir()
@@ -92,18 +100,61 @@ async fn upload_single_file(
     let passphrase = resolve_passphrase(&state, options);
     let password_enabled = passphrase.is_some();
 
-    let enc = zke::encrypt_file_to_zke_container(
-        &path,
-        &enc_path,
-        Some(&file_name),
-        &mime,
-        None,
-        passphrase.as_deref(),
-        DEFAULT_CHUNK_SIZE,
-    )
-    .map_err(|e| e.to_string())?;
+    let path_in = path.clone();
+    let enc_path_bg = enc_path.clone();
+    let file_name_bg = file_name.clone();
+    let mime_bg = mime.clone();
+    let pass_bg = passphrase.clone();
 
-    let raw_key = enc.raw_key.clone().ok_or("Missing encryption key")?;
+    let enc = tokio::task::spawn_blocking(move || {
+        zke::encrypt_file_to_zke_container(
+            &path_in,
+            &enc_path_bg,
+            Some(&file_name_bg),
+            &mime_bg,
+            None,
+            pass_bg.as_deref(),
+            DEFAULT_CHUNK_SIZE,
+        )
+    })
+    .await
+    .map_err(|e| format!("encrypt task failed: {e}"))?
+    .map_err(|e| {
+        let msg = e.to_string();
+        update_transfer(
+            &state,
+            &app,
+            &transfer_id,
+            "failed",
+            0.0,
+            0,
+            plain_size,
+            None,
+            Some(msg.clone()),
+        );
+        msg
+    })?;
+
+    append_app_log(
+        &app,
+        &format!("encrypt done: {} -> {}", file_name, enc_path.display()),
+    );
+
+    let raw_key = enc.raw_key.clone().ok_or_else(|| {
+        let msg = "Missing encryption key".to_string();
+        update_transfer(
+            &state,
+            &app,
+            &transfer_id,
+            "failed",
+            0.0,
+            0,
+            plain_size,
+            None,
+            Some(msg.clone()),
+        );
+        msg
+    })?;
     let enc_meta = std::fs::metadata(&enc_path).map_err(|e| e.to_string())?;
     let enc_size = enc_meta.len();
     let expiration_days = options.expiration_days.unwrap_or(180).max(1);
@@ -259,6 +310,53 @@ async fn upload_single_file(
     let _ = std::fs::remove_file(&enc_path);
 
     Ok(share_url)
+}
+
+fn normalize_tier(raw: Option<&String>) -> String {
+    let t = raw
+        .map(|s| s.to_lowercase())
+        .unwrap_or_else(|| "free".into());
+    if t == "premium" || t == "professional" {
+        "creator".into()
+    } else {
+        t
+    }
+}
+
+fn is_premium_tier(tier: &str) -> bool {
+    tier == "pro" || tier == "creator"
+}
+
+fn is_creator_tier(tier: &str) -> bool {
+    tier == "creator"
+}
+
+fn clamp_upload_options(state: &SharedState, options: &mut UploadOptions) -> Result<(), String> {
+    let tier = normalize_tier(state.session.read().tier.as_ref());
+    if options.password.as_ref().is_some_and(|p| !p.is_empty()) && !is_premium_tier(&tier) {
+        return Err("Password-protected uploads require Pro.".into());
+    }
+    if options.use_master_key == Some(true) && !is_premium_tier(&tier) {
+        return Err("Master key requires Pro.".into());
+    }
+    if options
+        .custom_link
+        .as_ref()
+        .is_some_and(|s| !s.trim().is_empty())
+        && !is_creator_tier(&tier)
+    {
+        return Err("Custom link slugs require Creator.".into());
+    }
+    let max_exp = match tier.as_str() {
+        "free" | "lite" => Some(90u32),
+        "basic" => Some(365u32),
+        _ => None,
+    };
+    if let Some(max) = max_exp {
+        let days = options.expiration_days.unwrap_or(90);
+        options.expiration_days = Some(days.min(max));
+    }
+    Ok(())
 }
 
 fn resolve_passphrase(state: &SharedState, options: &UploadOptions) -> Option<String> {

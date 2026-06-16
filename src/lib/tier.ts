@@ -50,6 +50,14 @@ export function isCreatorTier(tier: string): boolean {
   return normalizeTierName(tier) === "creator";
 }
 
+/** Matches website EXPIRATION_DEFAULTS / MAX_EXPIRATION */
+export function maxExpirationDays(tier: string): number | null {
+  const t = normalizeTierName(tier);
+  if (t === "free" || t === "lite") return 90;
+  if (t === "basic") return 365;
+  return null;
+}
+
 export function storageLimitForTier(tier: string): number | null {
   const t = normalizeTierName(tier);
   if (t === "pro" || t === "creator") return null;

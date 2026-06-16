@@ -1,6 +1,6 @@
 import { formatBytes } from "./invoke";
 import { icon } from "./icons";
-import { isCreatorTier, isPremiumTier } from "./tier";
+import { isCreatorTier, isPremiumTier, maxExpirationDays } from "./tier";
 
 export interface PendingUpload {
   paths: string[];
@@ -28,6 +28,7 @@ function esc(s: string): string {
 export function renderUploadOptionsPanel(pending: PendingUpload, tier: string, masterKeyEnabled = false): string {
   const pro = isPremiumTier(tier);
   const creator = isCreatorTier(tier);
+  const maxExp = maxExpirationDays(tier);
   const fileLabel =
     pending.names.length === 1
       ? pending.names[0]
@@ -43,8 +44,8 @@ export function renderUploadOptionsPanel(pending: PendingUpload, tier: string, m
     </div>
     <div class="upload-options-grid">
       <label class="upload-opt">
-        <span>Expiration (days)</span>
-        <input type="number" id="uploadExpDays" min="1" max="3650" value="${pending.expirationDays}" />
+        <span>Expiration (days)${maxExp ? ` · max ${maxExp}` : ""}</span>
+        <input type="number" id="uploadExpDays" min="1" max="${maxExp ?? 3650}" value="${Math.min(pending.expirationDays, maxExp ?? pending.expirationDays)}" />
       </label>
       <label class="upload-opt">
         <span>Max downloads</span>
@@ -83,7 +84,13 @@ export function readUploadOptionsFromDom(
   const pwEl = document.getElementById("uploadPassword") as HTMLInputElement | null;
   const linkEl = document.getElementById("uploadCustomLink") as HTMLInputElement | null;
 
-  const expirationDays = Math.max(1, parseInt(expEl?.value || String(pending.expirationDays), 10) || 180);
+  const expirationDays = Math.max(
+    1,
+    Math.min(
+      maxExpirationDays(tier) ?? 3650,
+      parseInt(expEl?.value || String(pending.expirationDays), 10) || 180
+    )
+  );
   const maxRaw = maxEl?.value.trim();
   const maxDownloads = maxRaw ? Math.max(1, parseInt(maxRaw, 10) || 0) : null;
   const password =

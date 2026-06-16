@@ -3,6 +3,7 @@ import "./styles/app.css";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import {
   formatUsageLabel,
   normalizeFile,
@@ -24,6 +25,7 @@ import {
   type UploadSubmitOptions,
 } from "./lib/upload-flow";
 import { hideChatRoom, filterHiddenChats } from "./lib/hidden-chats";
+import titlebarLogo from "./assets/fileshot-icon.png";
 import {
   type SettingsView,
   renderGeneralSettings,
@@ -42,6 +44,7 @@ import {
   tierDisplayName,
   normalizeTierName,
   bestTier,
+  maxExpirationDays,
 } from "./lib/tier";
 import {
   api,
@@ -153,7 +156,7 @@ function totalFileBytes(): number {
 const appEl = document.getElementById("app")!;
 
 function logoImg(className: string, size = 18) {
-  return `<img src="/favicon.ico" alt="" class="${className}" width="${size}" height="${size}" />`;
+  return `<img src="${titlebarLogo}" alt="" class="${className}" width="${size}" height="${size}" />`;
 }
 
 function authBrandLogo() {
@@ -864,6 +867,12 @@ async function handleContextAction(action: string, el: HTMLElement) {
     } else if (action === "copy-id") {
       await navigator.clipboard.writeText(file.fileId);
     } else if (action === "versions") {
+      if (!isPremiumTier(currentTier())) {
+        showToast("File versioning requires Pro.", "error");
+        closeContextMenu();
+        render();
+        return;
+      }
       const res = await api.filesVersions(file.fileId);
       const versions = (res as { versions?: Array<{ versionNumber?: number; fileName?: string; fileSize?: number; isLatest?: boolean }> }).versions || [];
       state.versionsPanel = { fileId: file.fileId, fileName: file.fileName, versions };
@@ -1035,11 +1044,12 @@ async function queueUpload(paths?: string[]) {
   const selected = paths ?? (await api.pickFiles());
   if (!selected.length) return;
   const names = selected.map((p) => p.split(/[/\\]/).pop() || "file");
+  const maxExp = maxExpirationDays(currentTier());
   state.pendingUpload = {
     paths: selected,
     names,
     totalBytes: 0,
-    expirationDays: 180,
+    expirationDays: maxExp ?? 180,
     maxDownloads: "",
     passwordEnabled: false,
     password: "",
@@ -1068,6 +1078,8 @@ async function runUploadWithOptions(opts: UploadSubmitOptions) {
     if (urls.length) {
       state.shareUrl = urls[urls.length - 1];
       log(`upload done: ${urls[urls.length - 1]}`);
+    } else {
+      showToast("Upload failed — see Transfers for details.", "error");
     }
     await refreshData();
     render();
@@ -1673,6 +1685,11 @@ async function boot() {
     if (state.session?.token) render();
   });
   await api.onTrayQuickUpload(() => doUpload());
+  await listen<{ path?: string; error?: string }>("upload-error", (e) => {
+    const err = e.payload?.error || "Upload failed";
+    log(`upload error event: ${err}`);
+    showToast(String(err), "error");
+  });
 
   window.addEventListener("focus", () => {
     void onAppFocus();
