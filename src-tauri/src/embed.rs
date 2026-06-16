@@ -92,9 +92,27 @@ pub fn embed_open(
     };
 
     let init = auth_init_script(state)?;
+    let download_hook = r#"
+(function(){
+  function notify(name){
+    try{window.__TAURI_INTERNALS__.invoke('transfer_download_notify',{name:name||'Download'});}catch(e){}
+  }
+  window.__fileshotDesktopDownload=notify;
+  document.addEventListener('click',function(e){
+    var a=e.target&&e.target.closest?e.target.closest('a[download]'):null;
+    if(a) notify(a.download||a.textContent||'Download');
+  },true);
+  var origClick=HTMLAnchorElement.prototype.click;
+  HTMLAnchorElement.prototype.click=function(){
+    if(this.hasAttribute('download')) notify(this.download||this.textContent||'Download');
+    return origClick.call(this);
+  };
+})();
+"#;
 
     let builder = WebviewBuilder::new(EMBED_LABEL, WebviewUrl::External(parsed))
         .initialization_script(&init)
+        .initialization_script(download_hook)
         .focused(false);
 
     let webview = window
@@ -158,7 +176,7 @@ fn park_embed_offscreen(embed: &tauri::Webview) {
 
 pub fn embed_close(app: &AppHandle) {
     if let Some(w) = app.get_webview(EMBED_LABEL) {
-        park_embed_offscreen(&w);
+        let _ = w.close();
     }
     EMBED.lock().last_url = None;
 }

@@ -38,6 +38,7 @@ export interface TransferItem {
   bytes_total: number;
   share_url: string | null;
   error: string | null;
+  kind?: string;
 }
 
 export interface FileItem {

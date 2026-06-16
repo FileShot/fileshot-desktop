@@ -25,7 +25,7 @@ import {
   type UploadSubmitOptions,
 } from "./lib/upload-flow";
 import { hideChatRoom, filterHiddenChats } from "./lib/hidden-chats";
-import titlebarLogo from "./assets/fileshot-icon.png";
+import titlebarLogo from "./assets/logonew.png";
 import {
   type SettingsView,
   renderGeneralSettings,
@@ -155,25 +155,24 @@ function totalFileBytes(): number {
 
 const appEl = document.getElementById("app")!;
 
-function logoImg(className: string, size = 18) {
-  return `<img src="${titlebarLogo}" alt="" class="${className}" width="${size}" height="${size}" />`;
+function logoImg(className: string) {
+  return `<img src="${titlebarLogo}" alt="FileShot.io" class="${className}" />`;
 }
 
 function authBrandLogo() {
-  return `<img src="/logonew.png" alt="FileShot.io" class="auth-brand-logo" width="280" height="36" />`;
+  return `<img src="${titlebarLogo}" alt="FileShot.io" class="auth-brand-logo" />`;
 }
 
 function titlebar() {
   return `
     <header class="titlebar">
-      <div class="titlebar-brand">
-        ${logoImg("titlebar-logo")}
-        <span>FileShot</span>
+      <div class="titlebar-drag" data-tauri-drag-region>
+        ${logoImg("titlebar-wordmark")}
       </div>
       <div class="titlebar-controls">
-        <button class="tb-btn" data-win="min" title="Minimize">&#8211;</button>
-        <button class="tb-btn" data-win="max" title="Maximize">&#9633;</button>
-        <button class="tb-btn tb-close" data-win="close" title="Close">&#10005;</button>
+        <button type="button" class="tb-btn" data-win="min" title="Minimize">&#8211;</button>
+        <button type="button" class="tb-btn" data-win="max" title="Maximize">&#9633;</button>
+        <button type="button" class="tb-btn tb-close" data-win="close" title="Close">&#10005;</button>
       </div>
     </header>
   `;
@@ -476,31 +475,44 @@ function renderFilesContent(): string {
         .join("")}
     </div>
   `;
-  return `${showUpload ? uploadBlock : ""}${showUpload && !state.pendingUpload ? filesToolbarHtml() : ""}${grid}`;
+  return `${showUpload ? uploadBlock : ""}${showUpload && !state.pendingUpload ? filesToolbarHtml() : ""}<div class="files-scroll">${grid}</div>`;
+}
+
+function transferKindLabel(kind?: string): string {
+  return kind === "download" ? "download" : "upload";
+}
+
+function renderTransferRows(items: TransferItem[]): string {
+  return items
+    .map(
+      (t) => `
+        <div class="transfer-item glass">
+          <div class="transfer-top">
+            <span><span class="transfer-kind ${transferKindLabel(t.kind)}">${transferKindLabel(t.kind)}</span>${escapeHtml(t.name)}</span>
+            <span style="color:var(--text-muted)">${t.status}${t.kind === "download" && t.path ? "" : ` · ${Math.round(t.progress)}%`}</span>
+          </div>
+          ${t.kind !== "download" || t.progress < 100 ? `<div class="progress-bar"><div class="progress-fill" style="width:${t.progress}%"></div></div>` : ""}
+          ${t.path && t.status === "completed" ? `<div class="transfer-path" style="margin-top:6px;font-size:11px;color:var(--t3);word-break:break-all">${escapeHtml(t.path)}</div>` : ""}
+          ${t.share_url ? `<button class="btn btn-ghost btn-sm" style="margin-top:8px" data-copy-url="${escapeHtml(t.share_url)}">Copy share link</button>` : ""}
+          ${t.error ? `<div class="auth-error">${escapeHtml(t.error)}</div>` : ""}
+        </div>`
+    )
+    .join("");
 }
 
 function renderTransfersContent(): string {
   if (!state.transfers.length) {
     return `<div class="empty-state"><div class="empty-icon">${icon("transfers", 28)}</div><h2>No transfers yet</h2><p>Uploads and downloads will appear here.</p></div>`;
   }
-  return `
-    <div class="transfer-list">
-      ${state.transfers
-        .map(
-          (t) => `
-        <div class="transfer-item glass">
-          <div class="transfer-top">
-            <span>${escapeHtml(t.name)}</span>
-            <span style="color:var(--text-muted)">${t.status} &middot; ${Math.round(t.progress)}%</span>
-          </div>
-          <div class="progress-bar"><div class="progress-fill" style="width:${t.progress}%"></div></div>
-          ${t.share_url ? `<button class="btn btn-ghost btn-sm" style="margin-top:8px" data-copy-url="${escapeHtml(t.share_url)}">Copy share link</button>` : ""}
-          ${t.error ? `<div class="auth-error">${escapeHtml(t.error)}</div>` : ""}
-        </div>`
-        )
-        .join("")}
-    </div>
-  `;
+  const downloads = state.transfers.filter((t) => t.kind === "download");
+  const uploads = state.transfers.filter((t) => t.kind !== "download");
+  const downloadBlock = downloads.length
+    ? `<div class="transfer-section"><div class="transfer-section-title">Downloads</div><div class="transfer-list">${renderTransferRows(downloads)}</div></div>`
+    : "";
+  const uploadBlock = uploads.length
+    ? `<div class="transfer-section"><div class="transfer-section-title">Uploads</div><div class="transfer-list">${renderTransferRows(uploads)}</div></div>`
+    : "";
+  return `${downloadBlock}${uploadBlock}`;
 }
 
 function embedSitePath(): string | null {
@@ -841,8 +853,7 @@ async function handleContextAction(action: string, el: HTMLElement) {
 
   try {
     if (action === "download") {
-      const path = await api.pickSavePath(file.fileName);
-      if (path) await api.downloadFile(file.fileId, path);
+      await startFileDownload(file.fileId, file.fileName);
     } else if (action === "public-link" || action === "share") {
       const url = await api.fileShareUrl(file.fileId, file.customLink);
       await navigator.clipboard.writeText(url);
@@ -1366,8 +1377,7 @@ function bindAppEvents() {
             const url = await api.fileShareUrl(file.fileId, file.customLink);
             await navigator.clipboard.writeText(url);
           } else if (action === "download" && file) {
-            const path = await api.pickSavePath(file.fileName);
-            if (path) await api.downloadFile(id, path);
+            await startFileDownload(id, file.fileName);
           }
         } catch (e) {
           failures.push(id);
@@ -1478,12 +1488,9 @@ function bindAppEvents() {
         const url = await api.fileShareUrl(file.fileId, file.customLink);
         openUrl(url);
       } else if (action === "download" && file) {
-        const path = await api.pickSavePath(file.fileName);
-        if (path) {
-          await api.downloadFile(id, path);
-          await refreshData();
-          render();
-        }
+        await startFileDownload(id, file.fileName);
+        await refreshData();
+        render();
       } else if (action === "delete") {
         const ok = await showConfirm({
           title: "Delete file",
@@ -1638,24 +1645,47 @@ function bindCommonEvents() {
   });
 }
 
+async function startFileDownload(fileId: string, fileName: string) {
+  const path = await api.pickSavePath(fileName);
+  if (!path) return;
+  state.section = "transfers";
+  render();
+  await api.downloadFile(fileId, path);
+  showToast(`Downloaded ${fileName}`, "success");
+}
+
 let windowChromeBound = false;
+async function handleWindowChrome(action: string | undefined) {
+  if (!action) return;
+  try {
+    await api.embedClose();
+    lastEmbedUrl = null;
+    const win = getCurrentWindow();
+    if (action === "min") {
+      await win.minimize();
+    } else if (action === "max") {
+      if (await win.isMaximized()) await win.unmaximize();
+      else await win.maximize();
+    } else if (action === "close") {
+      await api.windowClose();
+    }
+  } catch (e) {
+    log(`window chrome ${action} failed: ${e}`);
+  }
+}
+
 function bindWindowChrome() {
   if (windowChromeBound) return;
   windowChromeBound = true;
-  document.addEventListener(
-    "click",
-    (e) => {
-      const btn = (e.target as HTMLElement | null)?.closest?.("[data-win]") as HTMLElement | null;
-      if (!btn) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const action = btn.dataset.win;
-      if (action === "min") void api.windowMinimize();
-      else if (action === "max") void api.windowToggleMaximize();
-      else if (action === "close") void api.windowClose();
-    },
-    true
-  );
+  const handler = (e: Event) => {
+    const btn = (e.target as HTMLElement | null)?.closest?.("[data-win]") as HTMLElement | null;
+    if (!btn) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    void handleWindowChrome(btn.dataset.win);
+  };
+  document.addEventListener("pointerdown", handler, true);
+  document.addEventListener("click", handler, true);
 }
 
 async function boot() {
@@ -1681,8 +1711,15 @@ async function boot() {
   render();
 
   await api.onTransfersUpdated((items) => {
+    const prevIds = new Set(state.transfers.map((t) => t.id));
     state.transfers = items;
-    if (state.session?.token) render();
+    if (state.session?.token) {
+      const newItems = items.filter((t) => !prevIds.has(t.id));
+      if (newItems.some((t) => t.kind === "download")) {
+        state.section = "transfers";
+      }
+      render();
+    }
   });
   await api.onTrayQuickUpload(() => doUpload());
   await listen<{ path?: string; error?: string }>("upload-error", (e) => {

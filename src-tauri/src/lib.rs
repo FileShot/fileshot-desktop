@@ -6,7 +6,7 @@ mod state;
 mod zke;
 
 use services::share::build_share_url;
-use services::upload::{download_file, upload_files, UploadOptions};
+use services::upload::{download_file, notify_embed_download, upload_files, UploadOptions};
 use services::preview::preview_thumb_path;
 use services::{
     load_session, persist_favorites, persist_keyring, persist_session, persist_settings, ApiClient,
@@ -575,7 +575,13 @@ async fn pick_save_path(app: AppHandle, default_name: String) -> Result<Option<S
 }
 
 #[tauri::command]
+fn transfer_download_notify(app: AppHandle, ctx: State<'_, AppCtx>, name: String) {
+    notify_embed_download(&app, &ctx.state, name);
+}
+
+#[tauri::command]
 fn window_minimize(app: AppHandle) -> Result<(), String> {
+    embed::embed_close(&app);
     if let Some(w) = app.get_webview_window("main") {
         w.minimize().map_err(|e| e.to_string())?;
     }
@@ -584,6 +590,7 @@ fn window_minimize(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn window_toggle_maximize(app: AppHandle) -> Result<(), String> {
+    embed::embed_close(&app);
     if let Some(w) = app.get_webview_window("main") {
         if w.is_maximized().unwrap_or(false) {
             w.unmaximize().map_err(|e| e.to_string())?;
@@ -596,6 +603,7 @@ fn window_toggle_maximize(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn window_close(app: AppHandle, ctx: State<'_, AppCtx>) -> Result<(), String> {
+    embed::embed_close(&app);
     if let Some(w) = app.get_webview_window("main") {
         if ctx.state.settings.read().minimize_to_tray {
             w.hide().map_err(|e| e.to_string())?;
@@ -745,6 +753,7 @@ pub fn run() {
             app_log_write,
             upload_paths,
             download_file_cmd,
+            transfer_download_notify,
             transfers_list,
             activity_list,
             favorites_list,

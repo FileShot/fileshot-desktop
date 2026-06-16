@@ -46,6 +46,8 @@ a:hover { text-decoration: underline; }
 
 /* Titlebar */
 .titlebar {
+  position: relative;
+  z-index: 10000;
   height: var(--titlebar-h);
   display: flex;
   align-items: center;
@@ -54,12 +56,26 @@ a:hover { text-decoration: underline; }
   background: rgba(0, 0, 0, 0.45);
   border-bottom: 1px solid var(--bdr);
   backdrop-filter: blur(16px);
-  -webkit-app-region: drag;
   user-select: none;
 }
-.titlebar-brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 12px; color: var(--t1); }
-.titlebar-logo { width: 18px; height: 18px; border-radius: 4px; object-fit: contain; flex-shrink: 0; }
-.titlebar-controls { display: flex; -webkit-app-region: no-drag; }
+.titlebar-drag {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+  -webkit-app-region: drag;
+}
+.titlebar-wordmark {
+  height: 22px;
+  width: auto;
+  max-width: min(160px, 42vw);
+  object-fit: contain;
+  object-position: left center;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+.titlebar-controls { display: flex; flex-shrink: 0; -webkit-app-region: no-drag; }
 .tb-btn { width: 40px; height: 28px; display: grid; place-items: center; color: var(--t2); border-radius: var(--r4); -webkit-app-region: no-drag; }
 .tb-btn:hover { background: var(--sur2); color: var(--t1); }
 .tb-close:hover { background: #e81123; color: #fff; }
@@ -470,7 +486,24 @@ a:hover { text-decoration: underline; }
   background: var(--aglow); border: 1px solid rgba(247, 150, 58, 0.2);
   margin-bottom: 4px;
 }
+.transfer-section { margin-bottom: 18px; }
+.transfer-section-title { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--t3); margin-bottom: 10px; }
 .transfer-list { display: flex; flex-direction: column; gap: 10px; }
+.transfer-kind {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--sur2);
+  color: var(--t2);
+  vertical-align: middle;
+}
+.transfer-kind.download { color: #7dd3fc; background: rgba(56, 189, 248, 0.12); }
+.transfer-kind.upload { color: var(--a); background: var(--aglow); }
 .transfer-item {
   border-radius: var(--r12); padding: 14px 16px;
 }

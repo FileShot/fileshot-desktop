@@ -75,6 +75,7 @@ async fn upload_single_file(
             bytes_total: plain_size,
             share_url: None,
             error: None,
+            kind: "upload".into(),
         });
     }
     push_transfer_emit(&state, &app);
@@ -409,6 +410,32 @@ fn update_transfer(
     push_transfer_emit(state, app);
 }
 
+pub fn notify_embed_download(app: &AppHandle, state: &SharedState, name: String) {
+    let transfer_id = uuid::Uuid::new_v4().to_string();
+    let label = if name.trim().is_empty() {
+        "Download".to_string()
+    } else {
+        name.trim().to_string()
+    };
+    add_activity(state, "download", &label, None);
+    {
+        let mut transfers = state.transfers.write();
+        transfers.push(TransferItem {
+            id: transfer_id,
+            name: label,
+            path: String::new(),
+            status: "completed".into(),
+            progress: 100.0,
+            bytes_done: 0,
+            bytes_total: 0,
+            share_url: None,
+            error: None,
+            kind: "download".into(),
+        });
+    }
+    push_transfer_emit(state, app);
+}
+
 pub async fn download_file(
     app: AppHandle,
     state: SharedState,
@@ -416,16 +443,94 @@ pub async fn download_file(
     file_id: String,
     save_path: String,
 ) -> Result<(), String> {
+    let file_name = {
+        let keyring = state.keyring.read();
+        keyring
+            .get(&file_id)
+            .map(|e| e.original_name.clone())
+            .unwrap_or_else(|| file_id.clone())
+    };
+    let transfer_id = uuid::Uuid::new_v4().to_string();
+    {
+        let mut transfers = state.transfers.write();
+        transfers.push(TransferItem {
+            id: transfer_id.clone(),
+            name: file_name.clone(),
+            path: save_path.clone(),
+            status: "downloading".into(),
+            progress: 0.0,
+            bytes_done: 0,
+            bytes_total: 0,
+            share_url: None,
+            error: None,
+            kind: "download".into(),
+        });
+    }
+    push_transfer_emit(&state, &app);
+
     let url = format!("{}/files/download/{}", state.api_base, file_id);
     let mut req = api.client.get(&url);
     if let Some(h) = ApiClient::auth_header(&state) {
         req = req.header("Authorization", h);
     }
-    let res = req.send().await.map_err(|e| e.to_string())?;
+    let res = req.send().await.map_err(|e| {
+        update_transfer(
+            &state,
+            &app,
+            &transfer_id,
+            "failed",
+            0.0,
+            0,
+            0,
+            None,
+            Some(e.to_string()),
+        );
+        e.to_string()
+    })?;
     if !res.status().is_success() {
-        return Err("Download failed".into());
+        let msg = "Download failed".to_string();
+        update_transfer(
+            &state,
+            &app,
+            &transfer_id,
+            "failed",
+            0.0,
+            0,
+            0,
+            None,
+            Some(msg.clone()),
+        );
+        return Err(msg);
     }
-    let bytes = res.bytes().await.map_err(|e| e.to_string())?;
+    let total = res.content_length().unwrap_or(0);
+    if total > 0 {
+        update_transfer(
+            &state,
+            &app,
+            &transfer_id,
+            "downloading",
+            5.0,
+            0,
+            total,
+            None,
+            None,
+        );
+    }
+    let bytes = res.bytes().await.map_err(|e| {
+        let msg = e.to_string();
+        update_transfer(
+            &state,
+            &app,
+            &transfer_id,
+            "failed",
+            0.0,
+            0,
+            total,
+            None,
+            Some(msg.clone()),
+        );
+        msg
+    })?;
 
     let tmp = app
         .path()
@@ -438,11 +543,61 @@ pub async fn download_file(
     if let Some(entry) = keyring.get(&file_id) {
         let out = Path::new(&save_path);
         zke::decrypt_zke_container(&tmp, out, Some(&entry.raw_key), None)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                let msg = e.to_string();
+                update_transfer(
+                    &state,
+                    &app,
+                    &transfer_id,
+                    "failed",
+                    0.0,
+                    0,
+                    bytes.len() as u64,
+                    None,
+                    Some(msg.clone()),
+                );
+                msg
+            })?;
         add_activity(&state, "download", &entry.original_name, Some(file_id.clone()));
         let _ = std::fs::remove_file(&tmp);
+        update_transfer(
+            &state,
+            &app,
+            &transfer_id,
+            "completed",
+            100.0,
+            bytes.len() as u64,
+            bytes.len() as u64,
+            None,
+            None,
+        );
         return Ok(());
     }
-    std::fs::write(&save_path, &bytes).map_err(|e| e.to_string())?;
+    std::fs::write(&save_path, &bytes).map_err(|e| {
+        let msg = e.to_string();
+        update_transfer(
+            &state,
+            &app,
+            &transfer_id,
+            "failed",
+            0.0,
+            0,
+            bytes.len() as u64,
+            None,
+            Some(msg.clone()),
+        );
+        msg
+    })?;
+    update_transfer(
+        &state,
+        &app,
+        &transfer_id,
+        "completed",
+        100.0,
+        bytes.len() as u64,
+        bytes.len() as u64,
+        None,
+        None,
+    );
     Ok(())
 }

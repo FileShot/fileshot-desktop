@@ -68,6 +68,12 @@ pub struct TransferItem {
     pub bytes_total: u64,
     pub share_url: Option<String>,
     pub error: Option<String>,
+    #[serde(default = "default_transfer_kind")]
+    pub kind: String,
+}
+
+fn default_transfer_kind() -> String {
+    "upload".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
