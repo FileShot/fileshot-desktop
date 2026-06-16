@@ -1,6 +1,7 @@
 pub mod preview;
 pub mod share;
 pub mod upload;
+pub mod vault;
 
 use crate::state::{ActivityItem, SharedState, TransferItem};
 use serde::{Deserialize, Serialize};

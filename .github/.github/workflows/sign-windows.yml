@@ -1,0 +1,17 @@
+name: Sign Windows Release
+
+on:
+  workflow_run:
+    workflows: [Release Desktop]
+    types: [completed]
+
+jobs:
+  signpath:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: SignPath placeholder
+        run: |
+          echo "Configure SIGNPATH_API_TOKEN and SignPath project after OSS approval."
+          echo "See docs/CODE_SIGNING.md"

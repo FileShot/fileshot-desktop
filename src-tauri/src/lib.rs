@@ -9,7 +9,8 @@ use services::share::build_share_url;
 use services::upload::{download_file, notify_embed_download, upload_files, UploadOptions};
 use services::preview::preview_thumb_path;
 use services::{
-    load_session, persist_favorites, persist_keyring, persist_session, persist_settings, ApiClient,
+    load_session, persist_favorites, persist_keyring, persist_session, persist_settings, vault,
+    ApiClient,
 };
 use serde_json::json;
 use state::{AppSettings, KeyringEntry, SessionState, SharedState};
@@ -47,6 +48,7 @@ async fn auth_login(
     }
     apply_session(&ctx.state, &res)?;
     persist_session(&app, &ctx.state).await?;
+    schedule_vault_hydrate(ctx.api.clone(), ctx.state.clone(), app);
     Ok(res)
 }
 
@@ -68,6 +70,7 @@ async fn auth_register(
         .await?;
     apply_session(&ctx.state, &res)?;
     persist_session(&app, &ctx.state).await?;
+    schedule_vault_hydrate(ctx.api.clone(), ctx.state.clone(), app);
     Ok(res)
 }
 
@@ -97,6 +100,7 @@ async fn auth_exchange_code(
         .await?;
     apply_session(&ctx.state, &res)?;
     persist_session(&app, &ctx.state).await?;
+    schedule_vault_hydrate(ctx.api.clone(), ctx.state.clone(), app);
     Ok(res)
 }
 
@@ -123,6 +127,15 @@ fn apply_session(state: &SharedState, res: &serde_json::Value) -> Result<(), Str
     Ok(())
 }
 
+pub(crate) fn schedule_vault_hydrate(api: ApiClient, state: SharedState, app: AppHandle) {
+    if state.session.read().token.is_none() {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        let _ = vault::hydrate_keyring(&api, &state, &app).await;
+    });
+}
+
 #[tauri::command]
 fn auth_get_session(ctx: State<'_, AppCtx>) -> SessionState {
     ctx.state.session.read().clone()
@@ -132,6 +145,7 @@ fn auth_get_session(ctx: State<'_, AppCtx>) -> SessionState {
 async fn auth_logout(ctx: State<'_, AppCtx>, app: AppHandle) -> Result<(), String> {
     let _ = ctx.api.post_json(&ctx.state, "/auth/logout", &json!({}), true).await;
     *ctx.state.session.write() = SessionState::default();
+    vault::clear_vault_session(&ctx.state);
     persist_session(&app, &ctx.state).await?;
     Ok(())
 }
@@ -689,6 +703,7 @@ pub fn run() {
         })
         .setup(move |app| {
             load_session(app.handle(), &state);
+            schedule_vault_hydrate(api.clone(), state.clone(), app.handle().clone());
             embed::destroy_native_embed(app.handle());
             setup_tray(app.handle())?;
             let settings = state.settings.read().clone();

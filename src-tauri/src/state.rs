@@ -17,6 +17,12 @@ pub struct AppSettings {
     pub master_key_enabled: bool,
     #[serde(default)]
     pub master_key: Option<String>,
+    #[serde(default = "default_vault_sync")]
+    pub vault_sync_enabled: bool,
+}
+
+fn default_vault_sync() -> bool {
+    true
 }
 
 fn default_theme() -> String {
@@ -93,6 +99,7 @@ pub struct AppState {
     pub favorites: RwLock<Vec<String>>,
     pub activity: RwLock<Vec<ActivityItem>>,
     pub api_base: String,
+    pub vault_passphrase: RwLock<Option<String>>,
 }
 
 impl AppState {
@@ -110,12 +117,14 @@ impl AppState {
                 theme: "system".to_string(),
                 master_key_enabled: false,
                 master_key: None,
+                vault_sync_enabled: true,
             }),
             keyring: RwLock::new(HashMap::new()),
             transfers: RwLock::new(Vec::new()),
             favorites: RwLock::new(Vec::new()),
             activity: RwLock::new(Vec::new()),
             api_base,
+            vault_passphrase: RwLock::new(None),
         }
     }
 }

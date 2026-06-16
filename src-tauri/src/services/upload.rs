@@ -1,4 +1,4 @@
-use crate::services::{add_activity, append_app_log, emit_transfer_update, persist_keyring, share::build_share_url, ApiClient};
+use crate::services::{add_activity, append_app_log, emit_transfer_update, persist_keyring, share::build_share_url, vault, ApiClient};
 use crate::state::{KeyringEntry, SharedState, TransferItem};
 use crate::zke::{self, DEFAULT_CHUNK_SIZE};
 use mime_guess::from_path;
@@ -294,6 +294,10 @@ async fn upload_single_file(
         );
     }
     let _ = persist_keyring(&app, &state).await;
+
+    if let Err(e) = vault::save_zke_key(&api, &state, &file_id, &raw_key).await {
+        append_app_log(&app, &format!("vault save: {e}"));
+    }
 
     update_transfer(
         &state,

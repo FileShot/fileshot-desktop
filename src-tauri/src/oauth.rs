@@ -52,6 +52,7 @@ async fn exchange_oauth_code(
         .await?;
     super::apply_session(state, &res)?;
     persist_session(app, state).await?;
+    super::schedule_vault_hydrate(api.clone(), state.clone(), app.clone());
     Ok(res)
 }
 
