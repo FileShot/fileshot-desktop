@@ -246,6 +246,13 @@ async fn upload_single_file(
         let res = req.send().await.map_err(|e| e.to_string())?;
         if !res.status().is_success() {
             let text = res.text().await.unwrap_or_default();
+            // deskchunk1: server already left uploading/pending — stop chunk loop; finalize below is idempotent when complete
+            if text.contains("already completed or cancelled") {
+                if bytes_sent == 0 {
+                    return Err(format!("chunk upload failed: {text}"));
+                }
+                break;
+            }
             return Err(format!("chunk upload failed: {text}"));
         }
 

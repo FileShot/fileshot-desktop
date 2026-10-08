@@ -58,13 +58,14 @@ async fn auth_register(
     app: AppHandle,
     email: String,
     password: String,
+    password_confirm: String,
 ) -> Result<serde_json::Value, String> {
     let res = ctx
         .api
         .post_json(
             &ctx.state,
             "/auth/register",
-            &json!({ "email": email, "password": password }),
+            &json!({ "email": email, "password": password, "passwordConfirm": password_confirm }),
             false,
         )
         .await?;

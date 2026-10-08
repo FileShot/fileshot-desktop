@@ -74,8 +74,8 @@ export interface EmbedBounds {
 export const api = {
   authLogin: (email: string, password: string) =>
     invoke<Record<string, unknown>>("auth_login", { email, password }),
-  authRegister: (email: string, password: string) =>
-    invoke<Record<string, unknown>>("auth_register", { email, password }),
+  authRegister: (email: string, password: string, passwordConfirm: string) =>
+    invoke<Record<string, unknown>>("auth_register", { email, password, passwordConfirm }),
   authExchangeCode: (code: string) =>
     invoke<Record<string, unknown>>("auth_exchange_code", { code }),
   authOauth: (provider: "google" | "github") =>

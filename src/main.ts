@@ -200,6 +200,14 @@ function renderAuth() {
             <label>Password</label>
             <input type="password" name="password" placeholder="Password" required minlength="8" />
           </div>
+          ${
+            state.authTab === "register"
+              ? `<div class="form-group">
+            <label>Confirm password</label>
+            <input type="password" name="passwordConfirm" placeholder="Confirm password" required minlength="8" />
+          </div>`
+              : ""
+          }
           <button type="submit" class="btn btn-primary" style="width:100%;margin-top:4px">
             ${state.authTab === "login" ? "Login" : "Create account"}
           </button>
@@ -1066,10 +1074,15 @@ async function queueUpload(paths?: string[]) {
   render();
 }
 
+let uploadInFlight = false;
+
 async function runUploadWithOptions(opts: UploadSubmitOptions) {
+  // deskchunk1: double-click Encrypt & upload started two transfers for the same file
+  if (uploadInFlight) return;
   if (!state.pendingUpload?.paths.length) return;
-  const paths = state.pendingUpload.paths;
+  const paths = [...new Set(state.pendingUpload.paths)];
   state.pendingUpload = null;
+  uploadInFlight = true;
   log(`upload start: ${paths.length} file(s)`);
   state.section = "transfers";
   render();
@@ -1093,6 +1106,8 @@ async function runUploadWithOptions(opts: UploadSubmitOptions) {
     log(`upload error: ${e}`);
     state.error = String(e);
     render();
+  } finally {
+    uploadInFlight = false;
   }
 }
 
@@ -1115,9 +1130,14 @@ function bindAuthEvents() {
     const fd = new FormData(e.target as HTMLFormElement);
     const email = String(fd.get("email"));
     const password = String(fd.get("password"));
+    const passwordConfirm = String(fd.get("passwordConfirm") || "");
     try {
       if (state.authTab === "login") await api.authLogin(email, password);
-      else await api.authRegister(email, password);
+      else {
+        if (!passwordConfirm) throw new Error("Please confirm your password");
+        if (password !== passwordConfirm) throw new Error("Passwords do not match");
+        await api.authRegister(email, password, passwordConfirm);
+      }
       state.session = await api.authGetSession();
       await syncProfile();
       await refreshData();
